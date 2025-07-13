@@ -94,23 +94,68 @@ void SaveProject()
     async.detach();
 }
 
-void SelectFont(Project* project)
+void SelectFont(Project* project, SDL_Renderer *renderer)
 {
-    auto task = [project]()
+    auto task = [project, renderer]()
         {
             const char* formats[] = { "*.ttf" };
             char* filename = tinyfd_openFileDialog("Choose Font", "", 1, formats, nullptr, false);
+            if (filename)
+            {
+                TTF_Font* font = TTF_OpenFont(filename, 32);
+                if (font)
+                {
+                    if (project->ttf_font)
+                    {
+                        project->internalMutex.lock();
+                        TTF_CloseFont(project->ttf_font);
+                        project->ttf_font = nullptr;
+                        for (auto item : project->chars)
+                        {
+                            SDL_DestroyTexture(item.texture);
+                        }
+                        project->chars.clear();
+                        project->internalMutex.unlock();
+                    }
 
-            project->internalMutex.lock();
-            if (project->ttf_font)
-                TTF_CloseFont(project->ttf_font);
-            project->ttf_font = TTF_OpenFont("fontc64.ttf", 16);
-            project->ttf_name = filename;
-            project->internalMutex.unlock();
+                    std::vector<Project::Char> chars;
+                    SDL_Color white = { 255, 255, 255, 255 };
+                    u16 text[2];
+                    text[1] = 0;
+                    for (u16 ch = 1; ch < 0xffff; ch++)
+                    {
+                        // create textures for each glyph in the font
+                        if (TTF_GlyphIsProvided(font, ch))
+                        {
+                            Project::Char item;
+                            item.ch = ch;
+                            item.selected = false;
+
+                            SDL_Color white = { 255, 255, 255, 255 };
+                            u16 text[2];
+                            text[0] = ch;
+                            SDL_Surface* surface = TTF_RenderUNICODE_Blended(font, text, white);
+                            item.texture = SDL_CreateTextureFromSurface(renderer, surface);
+                            SDL_SetTextureBlendMode(item.texture, SDL_BLENDMODE_BLEND);
+                            SDL_FreeSurface(surface);
+                            SDL_QueryTexture(item.texture, NULL, NULL, &item.w, &item.h);
+                            chars.push_back(item);
+                        }
+                    }
+
+                    project->internalMutex.lock();
+                    project->ttf_font = font;
+                    project->ttf_name = filename;
+                    project->chars = std::move(chars);
+                    project->internalMutex.unlock();
+                }
+            }
         };
 
-    std::thread async(task);
-    async.detach();
+    // have to just do them synchronous atm coz renderer can't be used async...
+    task();
+//    std::thread async(task);
+//    async.detach();
 }
 
 void AddMainTask(const Callback& func)
@@ -148,7 +193,7 @@ int main(int, char**)
     int windowWidth = gSettings.GetInt("WindowWidth", (int)(1280 * main_scale));
     int windowHeight = gSettings.GetInt("WindowHeight", (int)(720 * main_scale));
     SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
-    SDL_Window* window = SDL_CreateWindow("Dear ImGui SDL2+SDL_Renderer example", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, (int)(1280 * main_scale), (int)(720 * main_scale), window_flags);
+    SDL_Window* window = SDL_CreateWindow("Dear ImGui SDL2+SDL_Renderer example", windowX, windowY, windowWidth, windowHeight, window_flags);
     if (window == nullptr)
     {
         printf("Error: SDL_CreateWindow(): %s\n", SDL_GetError());
@@ -163,6 +208,7 @@ int main(int, char**)
     //SDL_RendererInfo info;
     //SDL_GetRendererInfo(renderer, &info);
     //SDL_Log("Current SDL_Renderer: %s", info.name);
+    TTF_Init();
 
     // Setup Dear ImGui context
     IMGUI_CHECKVERSION();
@@ -221,10 +267,40 @@ int main(int, char**)
         while (SDL_PollEvent(&event))
         {
             ImGui_ImplSDL2_ProcessEvent(&event);
-            if (event.type == SDL_QUIT)
+            switch (event.type)
+            {
+            case SDL_QUIT:
                 done = true;
-            if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_CLOSE && event.window.windowID == SDL_GetWindowID(window))
-                done = true;
+                break;
+
+                case SDL_WINDOWEVENT:
+                {
+                    switch (event.window.event)
+                    {
+                    case SDL_WINDOWEVENT_MOVED:
+                        {
+                            gSettings.Set("WindowX", (int)event.window.data1);
+                            gSettings.Set("WindowY", (int)event.window.data2);
+                            gSettings.Save();
+                        }
+                        break;
+                    case SDL_WINDOWEVENT_RESIZED:
+                        {
+                            gSettings.Set("WindowWidth", (int)event.window.data1);
+                            gSettings.Set("WindowHeight", (int)event.window.data2);
+                            gSettings.Save();
+                    }
+                        break;
+                    case SDL_WINDOWEVENT_CLOSE:
+                        if (event.window.windowID == SDL_GetWindowID(window))
+                        {
+                            done = true;
+                        }
+                        break;
+                    }
+                }
+                break;
+            }
         }
         if (SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED)
         {
@@ -264,6 +340,7 @@ int main(int, char**)
                 if (ImGui::DragFloat("Font scale", &font->Scale, 0.005f, 0.3f, 2.0f, "%.1f"))
                 {
                     gSettings.Set("FontScale", font->Scale);
+                    gSettings.Save();
                 }
 
                 ImGui::EndMenu();
@@ -272,6 +349,7 @@ int main(int, char**)
         }
 
         ImGuiWindowFlags flags = ImGuiWindowFlags_MenuBar;// ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar;
+
         for (auto project : g_projects)
         {
             if (ImGui::Begin(project->name.c_str(), &project->open, flags))
@@ -280,11 +358,78 @@ int main(int, char**)
                 ImGui::SameLine();
                 if (ImGui::Button(project->ttf_name.c_str()))
                 {
-                    SelectFont(project);
+                    SelectFont(project, renderer);
                 }
+                if (project->ttf_font)
+                {
+                    float oldScale = font->Scale;
+                    font->Scale = oldScale * 0.5f;
+
+                    ImVec2 scrolling_child_size = ImVec2(1000, 1000);
+                    ImGui::BeginChild("scrolling", scrolling_child_size, ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
+                    int idx = 0;
+                    ImVec4 offColBase(0.1f, 0.1f, 0.1f, 1.0f);
+                    ImVec4 offColHovered(0.2f, 0.2f, 0.2f, 1.0f);
+                    ImVec4 offColActive(0.3f, 0.3f, 0.3f, 1.0f);
+                    ImVec4 onColBase(0.2f, 0.2f, 0.0f, 1.0f);
+                    ImVec4 onColHovered(0.3f, 0.3f, 0.1f, 1.0f);
+                    ImVec4 onColActive(0.3f, 0.3f, 0.3f, 1.0f);
+                    for (auto& item : project->chars)
+                    {
+                        if (idx & 15) ImGui::SameLine();
+                        char out[16];
+                        sprintf_s(out, " %04x", item.ch);
+
+                        if (item.selected)
+                        {
+                            ImGui::PushStyleColor(ImGuiCol_Button, offColBase);
+                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, offColHovered);
+                            ImGui::PushStyleColor(ImGuiCol_ButtonActive, offColActive);
+                        }
+                        else
+                        {
+                            ImGui::PushStyleColor(ImGuiCol_Button, onColBase);
+                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, onColHovered);
+                            ImGui::PushStyleColor(ImGuiCol_ButtonActive, onColActive);
+                        }
+
+                        auto oldPos = ImGui::GetCursorPos();
+
+                        ImGui::PushID(item.ch);
+                        if (ImGui::Button("##custom_button", ImVec2(64, 64)))
+                            item.selected = !item.selected;
+                        ImGui::PopID();
+
+                        ImVec2 button_min = ImGui::GetItemRectMin();
+                        ImVec2 button_max = ImGui::GetItemRectMax();
+                        ImGui::SetCursorScreenPos(button_min);
+                        ImGui::Text(out);
+
+                        SDL_Rect rect;
+                        rect.w = 64;
+                        rect.h = 64;
+                        rect.x = (int)button_min.x;
+                        rect.y = (int)button_min.y;
+                        ImGui::Image((ImTextureID)item.texture, ImVec2(64,64));
+
+                        ImGui::SetCursorPos(oldPos);
+                        ImGui::InvisibleButton("##custom_button", ImVec2(64, 64));
+
+                        ImGui::PopStyleColor(3);
+                        idx++;
+                    }
+                    ImGui::EndChild();
+
+                    font->Scale = oldScale;
+                }
+
+
+
+
             }
             ImGui::End();
         }
+
 
         if (show_demo_window)
         {

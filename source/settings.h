@@ -12,7 +12,6 @@ public:
 	template<typename T> void Set(const std::string& key, const T &value)
 	{
 		dic[key] = std::format("{}", value);
-		Save();
 	}
 
 	std::string GetString(const std::string& key)
@@ -32,7 +31,7 @@ public:
 	{
 		auto result = dic.find(key);
 		if (result == dic.end()) return defaultValue;
-		return atof(result->second.c_str());
+		return (float)atof(result->second.c_str());
 	}
 
 	int GetInt(const std::string& key, int defaultValue)

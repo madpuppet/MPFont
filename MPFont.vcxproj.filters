@@ -314,7 +314,7 @@
       <Filter>TinyDialog</Filter>
     </ClInclude>
     <ClInclude Include="source\settings.h">
-      <Filter>IMGUI</Filter>
+      <Filter>Source Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -346,7 +346,7 @@
       <Filter>TinyDialog</Filter>
     </ClCompile>
     <ClCompile Include="source\settings.cpp">
-      <Filter>IMGUI</Filter>
+      <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

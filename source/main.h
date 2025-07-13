@@ -22,10 +22,19 @@ typedef std::function<void(void)> Callback;
 
 struct Project
 {
+    struct Char
+    {
+        u16 ch = 0;
+        bool selected = false;
+        SDL_Texture* texture = nullptr;
+        int w = 0;
+        int h = 0;
+    };
+
     std::string name;
     std::string ttf_name;
     TTF_Font* ttf_font = nullptr;
-    std::vector<u16> chars;
+    std::vector<Char> chars;
     std::mutex internalMutex;
     bool open = true;
 };
