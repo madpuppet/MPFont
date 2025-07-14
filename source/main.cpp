@@ -35,6 +35,14 @@ std::vector<Project*> g_projects;
 std::vector<Callback> g_mainThreadTasks;
 int g_selectedProject = -1;
 
+struct SelectState
+{
+    bool isSelecting = false;
+    int startIdx = -1;
+    bool isEnabling = false;
+} g_selectState;
+
+
 // new project
 void NewProject()
 {
@@ -129,10 +137,9 @@ void SelectFont(Project* project, SDL_Renderer *renderer)
                         {
                             Project::Char item;
                             item.ch = ch;
-                            item.selected = false;
+                            item.selected = true;
 
                             SDL_Color white = { 255, 255, 255, 255 };
-                            u16 text[2];
                             text[0] = ch;
                             SDL_Surface* surface = TTF_RenderUNICODE_Blended(font, text, white);
                             item.texture = SDL_CreateTextureFromSurface(renderer, surface);
@@ -348,7 +355,7 @@ int main(int, char**)
             ImGui::EndMainMenuBar();
         }
 
-        ImGuiWindowFlags flags = ImGuiWindowFlags_MenuBar;// ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar;
+        ImGuiWindowFlags flags = ImGuiWindowFlags_MenuBar | ImGuiWindowFlags_NoDocking;// ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar;
 
         for (auto project : g_projects)
         {
@@ -363,9 +370,126 @@ int main(int, char**)
                 if (project->ttf_font)
                 {
                     float oldScale = font->Scale;
-                    font->Scale = oldScale * 0.5f;
+                    font->Scale = 0.25f;
 
-                    ImVec2 scrolling_child_size = ImVec2(1000, 1000);
+                    const int size = 64;
+                    const int columns = 32;
+                    const int rows = (((int)project->chars.size() + (columns - 1)) / columns);
+                    const int rows_per_page = min(rows, 16);
+                    const int items_per_page = rows_per_page * columns;
+                    const int pages = (rows + (rows_per_page-1)) / rows_per_page;
+
+                    ImVec2 panel_size = ImVec2((float)columns*size, (float)rows_per_page*size);
+                    ImGui::ColorButton("##panel", ImVec4(0.7f, 0.1f, 0.7f, 1.0f), ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop, panel_size);
+                    ImVec2 panel_pos = ImGui::GetItemRectMin();
+                    ImVec2 panel_max = ImGui::GetItemRectMax();
+
+                    if (g_selectState.isSelecting)
+                    {
+                        if (ImGui::IsKeyDown(ImGuiKey::ImGuiKey_MouseLeft))
+                        {
+                            if (io.MousePos.x >= panel_pos.x && io.MousePos.x < panel_max.x && io.MousePos.y >= panel_pos.y && io.MousePos.y < panel_max.y)
+                            {
+                                int mc = (int)(io.MousePos.x - panel_pos.x) / size;
+                                int mr = (int)(io.MousePos.y - panel_pos.y) / size;
+                                int idx = project->page * items_per_page + mr * columns + mc;
+                                if (idx < (int)project->chars.size())
+                                {
+                                    project->chars[idx].selected = g_selectState.isEnabling;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            g_selectState.isSelecting = false;
+                        }
+                    }
+                    else
+                    {
+                        if (ImGui::IsKeyPressed(ImGuiKey::ImGuiKey_MouseLeft))
+                        {
+                            if (io.MousePos.x >= panel_pos.x && io.MousePos.x < panel_max.x && io.MousePos.y >= panel_pos.y && io.MousePos.y < panel_max.y)
+                            {
+                                int mc = (int)(io.MousePos.x - panel_pos.x) / size;
+                                int mr = (int)(io.MousePos.y - panel_pos.y) / size;
+                                int idx = project->page * items_per_page + mr * columns + mc;
+                                if (idx < (int)project->chars.size())
+                                {
+                                    g_selectState.isSelecting = true;
+                                    g_selectState.isEnabling = !project->chars[idx].selected;
+                                    g_selectState.startIdx = idx;
+                                    project->chars[idx].selected = g_selectState.isEnabling;
+                                }
+                            }
+                        }
+                    }
+
+                    if (ImGui::Button("Prev Page"))
+                    {
+                        project->page = max(0, project->page - 1);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Next Page"))
+                    {
+                        project->page = min(pages - 1, project->page + 1);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Clear All"))
+                    {
+                        for (auto& item : project->chars)
+                            item.selected = false;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Select All"))
+                    {
+                        for (auto& item : project->chars)
+                            item.selected = true;
+                    }
+
+                    ImVec4 colOffBG(0.1f, 0.1f, 0.1f, 1.0f);
+                    ImVec4 colOnBG(0.3f, 0.3f, 0.3f, 1.0f);
+                    ImVec4 colOffFG(0.5f, 0.5f, 0.5f, 1.0f);
+                    ImVec4 colOnFG(1.0f, 1.0f, 1.0f, 1.0f);
+
+                    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+                    int startIdx = project->page * items_per_page;
+                    int endIdx = min(startIdx + items_per_page, (int)project->chars.size());
+                    for (int idx = startIdx; idx < endIdx; idx++)
+                    {
+                        auto& item = project->chars[idx];
+                        ImVec4& colBG = item.selected ? colOnBG : colOffBG;
+                        ImVec4& colFG = item.selected ? colOnFG : colOffFG;
+
+                        int col = idx % columns;
+                        int row = (idx-startIdx) / columns;
+
+                        ImVec2 posMin;
+                        ImVec2 posMax;
+                        posMin.x = panel_pos.x + col * size + 2;
+                        posMin.y = panel_pos.y + row * size + 2;
+                        posMax.x = posMin.x + size - 4;
+                        posMax.y = posMin.y + size - 4;
+
+                        ImU32 colBG32 = ImGui::GetColorU32(colBG);
+                        ImU32 colFG32 = ImGui::GetColorU32(colFG);
+                        draw_list->AddRectFilled(posMin, posMax, colBG32);
+
+                        char out[16];
+                        sprintf_s(out, " %04x", item.ch);
+                        draw_list->AddText(font, 16, posMin, colFG32, out);
+
+                        ImVec2 centre;
+                        centre.x = (posMin.x + posMax.x) / 2;
+                        centre.y = (posMin.y + posMax.y) / 2 + 4;
+
+                        ImVec2 imgPos;
+                        imgPos.x = centre.x - item.w / 2;
+                        imgPos.y = centre.y - item.h / 2 + 4;
+                        ImGui::SetCursorScreenPos(imgPos);
+                        ImGui::ImageWithBg((ImTextureID)item.texture, ImVec2((float)item.w, (float)item.h), ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0), colFG);
+                    }
+
+#if 0
                     ImGui::BeginChild("scrolling", scrolling_child_size, ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
                     int idx = 0;
                     ImVec4 offColBase(0.1f, 0.1f, 0.1f, 1.0f);
@@ -376,41 +500,50 @@ int main(int, char**)
                     ImVec4 onColActive(0.3f, 0.3f, 0.3f, 1.0f);
                     for (auto& item : project->chars)
                     {
-                        if (idx & 15) ImGui::SameLine();
+                        if (idx % columns != 0) ImGui::SameLine();
                         char out[16];
                         sprintf_s(out, " %04x", item.ch);
 
                         if (item.selected)
                         {
-                            ImGui::PushStyleColor(ImGuiCol_Button, offColBase);
-                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, offColHovered);
-                            ImGui::PushStyleColor(ImGuiCol_ButtonActive, offColActive);
-                        }
-                        else
-                        {
                             ImGui::PushStyleColor(ImGuiCol_Button, onColBase);
                             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, onColHovered);
                             ImGui::PushStyleColor(ImGuiCol_ButtonActive, onColActive);
+                        }
+                        else
+                        {
+                            ImGui::PushStyleColor(ImGuiCol_Button, offColBase);
+                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, offColHovered);
+                            ImGui::PushStyleColor(ImGuiCol_ButtonActive, offColActive);
                         }
 
                         auto oldPos = ImGui::GetCursorPos();
 
                         ImGui::PushID(item.ch);
-                        if (ImGui::Button("##custom_button", ImVec2(64, 64)))
+                        if (ImGui::Button("##custom_button", ImVec2(size, size)))
                             item.selected = !item.selected;
                         ImGui::PopID();
 
-                        ImVec2 button_min = ImGui::GetItemRectMin();
-                        ImVec2 button_max = ImGui::GetItemRectMax();
-                        ImGui::SetCursorScreenPos(button_min);
+                        ImVec2 button_pos = ImGui::GetItemRectMin();
+                        ImGui::SetCursorScreenPos(button_pos);
                         ImGui::Text(out);
 
-                        SDL_Rect rect;
-                        rect.w = 64;
-                        rect.h = 64;
-                        rect.x = (int)button_min.x;
-                        rect.y = (int)button_min.y;
-                        ImGui::Image((ImTextureID)item.texture, ImVec2(64,64));
+                        button_pos.x += 12.0f;
+                        button_pos.y = ImGui::GetItemRectMax().y + 6.0f;
+                        ImGui::SetCursorScreenPos(button_pos);
+
+                        ImVec4 imageBGCol, imageFGCol;
+                        if (item.selected)
+                        {
+                            imageFGCol = ImVec4(1, 1, 1, 1);
+                        }
+                        else
+                        {
+                            imageFGCol = ImVec4(0.5f, 0.5f, 0.5f, 1);
+                        }
+
+                        ImGui::ImageWithBg((ImTextureID)item.texture, ImVec2(item.w, item.h), ImVec2(0,0), ImVec2(1,1), ImVec4(0,0,0,0), imageFGCol);
+//                        ImGui::Image((ImTextureID)item.texture, ImVec2(item.w,item.h));
 
                         ImGui::SetCursorPos(oldPos);
                         ImGui::InvisibleButton("##custom_button", ImVec2(64, 64));
@@ -419,6 +552,7 @@ int main(int, char**)
                         idx++;
                     }
                     ImGui::EndChild();
+#endif
 
                     font->Scale = oldScale;
                 }

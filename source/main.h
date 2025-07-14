@@ -37,6 +37,7 @@ struct Project
     std::vector<Char> chars;
     std::mutex internalMutex;
     bool open = true;
+    int page = 0;
 };
 
 // add a callback to run on the main thread next update
