@@ -230,6 +230,7 @@
     <ClInclude Include="source\sdl2\include\SDL_video.h" />
     <ClInclude Include="source\sdl2\include\SDL_vulkan.h" />
     <ClInclude Include="source\settings.h" />
+    <ClInclude Include="source\SHAD.h" />
     <ClInclude Include="source\tinydialog\tinyfiledialogs.h" />
   </ItemGroup>
   <ItemGroup>
@@ -242,6 +243,7 @@
     <ClCompile Include="source\imgui\imgui_widgets.cpp" />
     <ClCompile Include="source\main.cpp" />
     <ClCompile Include="source\settings.cpp" />
+    <ClCompile Include="source\SHAD.cpp" />
     <ClCompile Include="source\tinydialog\tinyfiledialogs.c" />
   </ItemGroup>
   <ItemGroup>

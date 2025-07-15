@@ -12,6 +12,11 @@ void Settings::Save()
     {
         out_file << it.first << ":" << it.second << "\n";
     }
+
+    for (auto p : projectList)
+        out_file << "project:" << p << "\n";
+
+    out_file.close();
 }
 
 void Settings::Load()
@@ -44,11 +49,17 @@ void Settings::Load()
                 value.erase(0, value.find_first_not_of(" \t"));
                 value.erase(value.find_last_not_of(" \t") + 1);
 
-                if (!key.empty()) {
+                if (key == "project")
+                {
+                    projectList.push_back(value);
+                }
+                else if (!key.empty()) 
+                {
                     dic[key] = value;
                 }
             }
         }
+        in_file.close();
     }
 }
 

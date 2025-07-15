@@ -35,7 +35,6 @@ struct Project
     std::string ttf_name;
     TTF_Font* ttf_font = nullptr;
     std::vector<Char> chars;
-    std::mutex internalMutex;
     bool open = true;
     int page = 0;
 };
