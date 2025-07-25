@@ -44,77 +44,13 @@ struct SelectState
     bool isEnabling = false;
 } g_selectState;
 
-
-void SelectFont(Project* project, SDL_Renderer* renderer, const std::string& filename)
-{
-    std::map<int, bool> selected;
-    for (auto ch : project->chars)
-        selected[ch.ch] = ch.selected;
-
-    TTF_Font* font = TTF_OpenFont(filename.c_str(), 32);
-    if (font)
-    {
-        if (project->ttf_font)
-        {
-            TTF_CloseFont(project->ttf_font);
-            project->ttf_font = nullptr;
-            for (auto item : project->chars)
-            {
-                SDL_DestroyTexture(item.texture);
-            }
-            project->chars.clear();
-        }
-
-        std::vector<Project::Char> chars;
-        SDL_Color white = { 255, 255, 255, 255 };
-        u16 text[2];
-        text[1] = 0;
-        for (u16 ch = 1; ch < 0xffff; ch++)
-        {
-            // create textures for each glyph in the font
-            if (TTF_GlyphIsProvided(font, ch))
-            {
-                Project::Char item;
-                item.ch = ch;
-                auto it = selected.find(ch);
-                item.selected = it != selected.end() ? it->second : true;
-
-                SDL_Color white = { 255, 255, 255, 255 };
-                text[0] = ch;
-                SDL_Surface* surface = TTF_RenderUNICODE_Blended(font, text, white);
-                item.texture = SDL_CreateTextureFromSurface(renderer, surface);
-                SDL_SetTextureBlendMode(item.texture, SDL_BLENDMODE_BLEND);
-                SDL_FreeSurface(surface);
-                SDL_QueryTexture(item.texture, NULL, NULL, &item.w, &item.h);
-                chars.push_back(item);
-            }
-        }
-
-        project->ttf_font = font;
-        project->ttf_name = filename;
-        project->chars = std::move(chars);
-    }
-}
-
-void SelectFont(Project* project, SDL_Renderer* renderer)
-{
-    const char* formats[] = { "*.ttf" };
-    char* filename = tinyfd_openFileDialog("Choose Font", "", 1, formats, nullptr, false);
-    if (filename)
-    {
-        SelectFont(project, renderer, filename);
-    }
-}
-
 // new project
 void NewProject()
 {
     char* name = tinyfd_inputBox("Name of Font Project", "Enter name for font project", "my_font");
     if (name)
     {
-        auto project = new Project;
-        project->name = name;
-        project->ttf_name = "<select ttf/otf>";
+        auto project = new Project(name);
         g_projects.push_back(project);
     }
 }
@@ -134,38 +70,9 @@ void LoadProject(const std::string& name, SDL_Renderer* renderer)
         {
             Shad shad;
             shad.Parse(mem, size);
-            auto roots = shad.GetRoots();
-            auto project = new Project;
-            project->name = name;
-            project->ttf_name = "";
-
-            for (auto r : roots)
-            {
-                project->name = r->GetString();
-                for (auto c : r->children)
-                {
-                    if (c->field == "font")
-                        project->ttf_name = c->GetString();
-                    else if (c->field == "chars")
-                    {
-                        for (auto ch : c->children)
-                        {
-                            Project::Char new_ch;
-                            new_ch.ch = ch->GetI32();
-                            for (auto subch : ch->children)
-                            {
-                                if (subch->field == "selected")
-                                    new_ch.selected = subch->GetBool();
-                            }
-                            project->chars.push_back(new_ch);
-                        }
-                    }
-                }
-            }
-
-            if (!project->ttf_name.empty())
-                SelectFont(project, renderer, project->ttf_name);
-
+            auto project = new Project("");
+            project->LoadFromShad(shad);
+            project->GenerateFont(renderer);
             g_projects.push_back(project);
         }
     }
@@ -181,46 +88,14 @@ void LoadProject(SDL_Renderer* renderer)
     }
 }
 
-void SaveProject(Project *project)
-{
-    const char* formats[] = { "*.vfnt" };
-    char* filename = tinyfd_saveFileDialog("Load Project", "", 1, formats, nullptr);
-    std::ofstream out_file(filename);
-    if (out_file.is_open())
-    {
-        project->name = filename;
-
-        Shad shad;
-        ShadNode* root = new ShadNode;
-        root->field = "mpfont";
-        root->values.push_back(project->name);
-        shad.AddRoot(root);
-        root->AddChild("font", std::format("\"{}\"", project->ttf_name));
-        auto charsNode = root->AddChild("chars");
-        for (auto& ch : project->chars)
-        {
-            auto charNode = charsNode->AddChild("char", ch.ch);
-            charNode->AddChild("selected", ch.selected);
-        }
-
-        u32 size;
-        char* mem;
-        shad.Write(mem, size);
-
-        out_file.write(mem, size);
-        out_file.close();
-    }
-}
-
 void SaveSettings()
 {
     std::vector<std::string> projectList;
     for (auto project : g_projects)
-        projectList.push_back(project->name);
+        projectList.push_back(project->Name());
     gSettings.SetProjects(projectList);
     gSettings.Save();
 }
-
 
 // Main code
 int main(int, char**)
@@ -330,9 +205,9 @@ int main(int, char**)
             ImGui_ImplSDL2_ProcessEvent(&event);
             switch (event.type)
             {
-            case SDL_QUIT:
-                done = true;
-                break;
+                case SDL_QUIT:
+                    done = true;
+                    break;
 
                 case SDL_WINDOWEVENT:
                 {
@@ -359,8 +234,8 @@ int main(int, char**)
                         }
                         break;
                     }
-                }
-                break;
+            }
+            break;
             }
         }
         if (SDL_GetWindowFlags(window) & SDL_WINDOW_MINIMIZED)
@@ -406,203 +281,23 @@ int main(int, char**)
             ImGui::EndMainMenuBar();
         }
 
-        ImGuiWindowFlags flags = ImGuiWindowFlags_NoDocking;// ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoTitleBar;
-
         int projectID = 0;
+        std::vector<Project*> closeProjects;
         for (auto project : g_projects)
         {
-            if (ImGui::Begin(project->name.c_str(), &project->open, flags))
-            {
-                ImGui::Text("FONT");
-                ImGui::SameLine();
-                if (ImGui::Button(project->ttf_name.c_str()))
-                {
-                    SelectFont(project, renderer);
-                    SaveSettings();
-                }
-                if (project->ttf_font)
-                {
-                    float oldScale = font->Scale;
-                    font->Scale = 0.25f;
-
-                    const int size = 64;
-                    const int columns = 32;
-                    const int rows = (((int)project->chars.size() + (columns - 1)) / columns);
-                    const int rows_per_page = min(rows, 16);
-                    const int items_per_page = rows_per_page * columns;
-                    const int pages = (rows + (rows_per_page-1)) / rows_per_page;
-
-                    ImVec2 panel_size = ImVec2((float)columns*size, (float)rows_per_page*size);
-                    ImGui::ColorButton("##panel", ImVec4(0.7f, 0.1f, 0.7f, 1.0f), ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop, panel_size);
-                    ImVec2 panel_pos = ImGui::GetItemRectMin();
-                    ImVec2 panel_max = ImGui::GetItemRectMax();
-
-                    if (g_selectState.isSelecting && project == g_selectState.project)
-                    {
-                        if (ImGui::IsKeyDown(ImGuiKey::ImGuiKey_MouseLeft))
-                        {
-                            if (io.MousePos.x >= panel_pos.x && io.MousePos.x < panel_max.x && io.MousePos.y >= panel_pos.y && io.MousePos.y < panel_max.y)
-                            {
-                                int mc = (int)(io.MousePos.x - panel_pos.x) / size;
-                                int mr = (int)(io.MousePos.y - panel_pos.y) / size;
-                                int idx = project->page * items_per_page + mr * columns + mc;
-                                if (idx < (int)project->chars.size())
-                                {
-                                    project->chars[idx].selected = g_selectState.isEnabling;
-                                }
-                            }
-                        }
-                        else
-                        {
-                            g_selectState.isSelecting = false;
-                            g_selectState.project = nullptr;
-                        }
-                    }
-                    else
-                    {
-                        if (ImGui::IsKeyPressed(ImGuiKey::ImGuiKey_MouseLeft, false))
-                        {
-                            OutputDebugStringA("BAM!");
-
-                            if (io.MousePos.x >= panel_pos.x && io.MousePos.x < panel_max.x && io.MousePos.y >= panel_pos.y && io.MousePos.y < panel_max.y)
-                            {
-                                int mc = (int)(io.MousePos.x - panel_pos.x) / size;
-                                int mr = (int)(io.MousePos.y - panel_pos.y) / size;
-                                int idx = project->page * items_per_page + mr * columns + mc;
-                                if (idx < (int)project->chars.size())
-                                {
-                                    g_selectState.isSelecting = true;
-                                    g_selectState.isEnabling = !project->chars[idx].selected;
-                                    g_selectState.startIdx = idx;
-                                    g_selectState.project = project;
-                                    project->chars[idx].selected = g_selectState.isEnabling;
-                                }
-                            }
-                        }
-                    }
-
-                    if (ImGui::Button("Prev Page"))
-                    {
-                        project->page = max(0, project->page - 1);
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Next Page"))
-                    {
-                        project->page = min(pages - 1, project->page + 1);
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Clear All"))
-                    {
-                        for (auto& item : project->chars)
-                            item.selected = false;
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Select All"))
-                    {
-                        for (auto& item : project->chars)
-                            item.selected = true;
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::MenuItem("Save Project"))
-                    {
-                        SaveProject(project);
-                        SaveSettings();
-                    }
-
-                    ImVec4 colOffBG(0.1f, 0.1f, 0.1f, 1.0f);
-                    ImVec4 colOnBG(0.3f, 0.3f, 0.3f, 1.0f);
-                    ImVec4 colOffFG(0.5f, 0.5f, 0.5f, 1.0f);
-                    ImVec4 colOnFG(1.0f, 1.0f, 1.0f, 1.0f);
-
-                    ImDrawList* draw_list = ImGui::GetWindowDrawList();
-                    int startIdx = project->page * items_per_page;
-                    int endIdx = min(startIdx + items_per_page, (int)project->chars.size());
-                    for (int idx = startIdx; idx < endIdx; idx++)
-                    {
-                        auto& item = project->chars[idx];
-                        ImVec4& colBG = item.selected ? colOnBG : colOffBG;
-                        ImVec4& colFG = item.selected ? colOnFG : colOffFG;
-
-                        int col = idx % columns;
-                        int row = (idx-startIdx) / columns;
-
-                        ImVec2 posMin;
-                        ImVec2 posMax;
-                        posMin.x = panel_pos.x + col * size + 2;
-                        posMin.y = panel_pos.y + row * size + 2;
-                        posMax.x = posMin.x + size - 4;
-                        posMax.y = posMin.y + size - 4;
-
-                        ImU32 colBG32 = ImGui::GetColorU32(colBG);
-                        ImU32 colFG32 = ImGui::GetColorU32(colFG);
-                        draw_list->AddRectFilled(posMin, posMax, colBG32);
-
-                        char out[16];
-                        sprintf_s(out, " %04x", item.ch);
-                        draw_list->AddText(font, 16, posMin, colFG32, out);
-
-                        ImVec2 centre;
-                        centre.x = (posMin.x + posMax.x) / 2;
-                        centre.y = (posMin.y + posMax.y) / 2 + 4;
-
-                        ImVec2 imgPos;
-                        imgPos.x = centre.x - item.w / 2;
-                        imgPos.y = centre.y - item.h / 2 + 4;
-                        ImGui::SetCursorScreenPos(imgPos);
-                        ImGui::ImageWithBg((ImTextureID)item.texture, ImVec2((float)item.w, (float)item.h), ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0), colFG);
-                    }
-                    font->Scale = oldScale;
-                }
-            }
-            ImGui::End();
+            if (!project->Gui(renderer))
+                closeProjects.push_back(project);
         }
-
+        for (auto project : closeProjects)
+        {
+            g_projects.erase(std::remove(g_projects.begin(), g_projects.end(), project), g_projects.end());
+            delete project;
+        }
 
         if (show_demo_window)
         {
             ImGui::ShowDemoWindow(&show_demo_window);
         }
-
-#if 0
-
-
-        // 1. Show the big demo window (Most of the sample code is in ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear ImGui!).
-        if (show_demo_window)
-            ImGui::ShowDemoWindow(&show_demo_window);
-
-        // 2. Show a simple window that we create ourselves. We use a Begin/End pair to create a named window.
-        {
-            static float f = 0.0f;
-            static int counter = 0;
-
-            ImGui::Begin("Hello, world!");                          // Create a window called "Hello, world!" and append into it.
-
-            ImGui::Text("This is some useful text.");               // Display some text (you can use a format strings too)
-            ImGui::Checkbox("Demo Window", &show_demo_window);      // Edit bools storing our window open/close state
-            ImGui::Checkbox("Another Window", &show_another_window);
-
-            ImGui::SliderFloat("float", &f, 0.0f, 1.0f);            // Edit 1 float using a slider from 0.0f to 1.0f
-            ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
-
-            if (ImGui::Button("Button"))                            // Buttons return true when clicked (most widgets return true when edited/activated)
-                counter++;
-            ImGui::SameLine();
-            ImGui::Text("counter = %d", counter);
-
-            ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
-            ImGui::End();
-        }
-
-        // 3. Show another simple window.
-        if (show_another_window)
-        {
-            ImGui::Begin("Another Window", &show_another_window);   // Pass a pointer to our bool variable (the window will have a closing button that will clear the bool when clicked)
-            ImGui::Text("Hello from another window!");
-            if (ImGui::Button("Close Me"))
-                show_another_window = false;
-            ImGui::End();
-        }
-#endif
 
         // Rendering
         ImGui::Render();

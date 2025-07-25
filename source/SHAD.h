@@ -113,7 +113,7 @@ public:
 	void Parse(const char* mem, u32 size);
 	void Write(char* &outmem, u32 &size);
 
-	const std::vector<ShadNode*>& GetRoots() { return m_roots; }
+	const std::vector<ShadNode*>& GetRoots() const { return m_roots; }
 	void AddRoot(ShadNode* node) { m_roots.push_back(node); }
 
 private:

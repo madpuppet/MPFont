@@ -140,6 +140,7 @@
     <ClInclude Include="source\imgui\imstb_textedit.h" />
     <ClInclude Include="source\imgui\imstb_truetype.h" />
     <ClInclude Include="source\main.h" />
+    <ClInclude Include="source\Project.h" />
     <ClInclude Include="source\sdl2\include\begin_code.h" />
     <ClInclude Include="source\sdl2\include\close_code.h" />
     <ClInclude Include="source\sdl2\include\SDL.h" />
@@ -232,6 +233,7 @@
     <ClInclude Include="source\settings.h" />
     <ClInclude Include="source\SHAD.h" />
     <ClInclude Include="source\tinydialog\tinyfiledialogs.h" />
+    <ClInclude Include="source\types.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\imgui\imgui.cpp" />
@@ -242,6 +244,7 @@
     <ClCompile Include="source\imgui\imgui_tables.cpp" />
     <ClCompile Include="source\imgui\imgui_widgets.cpp" />
     <ClCompile Include="source\main.cpp" />
+    <ClCompile Include="source\Project.cpp" />
     <ClCompile Include="source\settings.cpp" />
     <ClCompile Include="source\SHAD.cpp" />
     <ClCompile Include="source\tinydialog\tinyfiledialogs.c" />
