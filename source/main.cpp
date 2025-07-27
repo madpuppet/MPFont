@@ -44,6 +44,12 @@ struct SelectState
     bool isEnabling = false;
 } g_selectState;
 
+std::vector<GenericTask> g_tasks;
+void QueueTask(const GenericTask& func)
+{
+    g_tasks.push_back(func);
+}
+
 // new project
 void NewProject()
 {
@@ -58,6 +64,11 @@ void NewProject()
 // load project
 void LoadProject(const std::string& name, SDL_Renderer* renderer)
 {
+    // check project isn't already loaded...
+    for (auto proj : g_projects)
+        if (proj->Name() == name)
+            return;
+
     std::ifstream file(name, std::ios::binary | std::ios::ate);
     if (file.is_open())
     {
@@ -70,7 +81,7 @@ void LoadProject(const std::string& name, SDL_Renderer* renderer)
         {
             Shad shad;
             shad.Parse(mem, size);
-            auto project = new Project("");
+            auto project = new Project(name);
             project->LoadFromShad(shad);
             project->GenerateFont(renderer);
             g_projects.push_back(project);
@@ -244,6 +255,29 @@ int main(int, char**)
             continue;
         }
 
+        std::vector<GenericTask> tasks = std::move(g_tasks);
+        for (auto& task : tasks)
+        {
+            task();
+        }
+
+        // close any finished projects
+        std::vector<Project*> closeProjects;
+        for (auto project : g_projects)
+        {
+            if (project->CloseRequested())
+                closeProjects.push_back(project);
+        }
+        if (closeProjects.size() > 0)
+        {
+            for (auto project : closeProjects)
+            {
+                g_projects.erase(std::remove(g_projects.begin(), g_projects.end(), project), g_projects.end());
+                delete project;
+            }
+            SaveSettings();
+        }
+
         // Start the Dear ImGui frame
         ImGui_ImplSDLRenderer2_NewFrame();
         ImGui_ImplSDL2_NewFrame();
@@ -261,38 +295,25 @@ int main(int, char**)
             {
                 if (ImGui::MenuItem("New Project", "CTRL+N"))
                 {
-                    NewProject();
+                    QueueTask([]() { NewProject(); });
                 }
                 if (ImGui::MenuItem("Load Project", "CTRL+L"))
                 {
-                    LoadProject(renderer);
-                    SaveSettings();
+                    QueueTask([renderer]() { LoadProject(renderer); SaveSettings(); });
                 }
-
                 ImFont* font = ImGui::GetFont();
                 if (ImGui::DragFloat("Font scale", &font->Scale, 0.005f, 0.3f, 2.0f, "%.1f"))
                 {
                     gSettings.Set("FontScale", font->Scale);
                     SaveSettings();
                 }
-
                 ImGui::EndMenu();
             }
             ImGui::EndMainMenuBar();
         }
 
-        int projectID = 0;
-        std::vector<Project*> closeProjects;
         for (auto project : g_projects)
-        {
-            if (!project->Gui(renderer))
-                closeProjects.push_back(project);
-        }
-        for (auto project : closeProjects)
-        {
-            g_projects.erase(std::remove(g_projects.begin(), g_projects.end(), project), g_projects.end());
-            delete project;
-        }
+            project->Gui(renderer);
 
         if (show_demo_window)
         {

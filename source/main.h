@@ -9,6 +9,8 @@
 #include "Project.h"
 #include "types.h"
 
+typedef std::function<void(void)> GenericTask;
+
 // save general gui and tool settings to appdata
 void SaveSettings();
-
+void QueueTask(const GenericTask &func);

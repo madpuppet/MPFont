@@ -64,6 +64,8 @@ bool Project::Gui(SDL_Renderer* renderer)
             AskForFont(renderer);
             SaveSettings();
         }
+        ImGui::DragInt("Range", &m_sdfRange, 0.01f, 1, 10);
+
         if (m_ttf_font)
         {
             float oldScale = font->Scale;
@@ -77,7 +79,7 @@ bool Project::Gui(SDL_Renderer* renderer)
             const int pages = (rows + (rows_per_page - 1)) / rows_per_page;
 
             ImVec2 panel_size = ImVec2((float)columns * size, (float)rows_per_page * size);
-            ImGui::ColorButton("##panel", ImVec4(0.7f, 0.1f, 0.7f, 1.0f), ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop, panel_size);
+            ImGui::ColorButton("##chars", ImVec4(0.7f, 0.1f, 0.7f, 1.0f), ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop, panel_size);
             ImVec2 panel_pos = ImGui::GetItemRectMin();
             ImVec2 panel_max = ImGui::GetItemRectMax();
 
@@ -145,13 +147,39 @@ bool Project::Gui(SDL_Renderer* renderer)
             ImGui::SameLine();
             if (ImGui::Button("Generate SDF"))
             {
-                GenerateSDF();
+                auto task = [this, renderer]() { this->GenerateSDF(renderer); };
+                QueueTask(task);
             }
             ImGui::SameLine();
             if (ImGui::MenuItem("Save Project"))
             {
                 Save();
                 SaveSettings();
+            }
+
+            const int sdf_rows = (((int)m_sdfChars.size() + (columns - 1)) / columns);
+            const int sdf_rows_per_page = std::min(sdf_rows, 16);
+            const int sdf_items_per_page = sdf_rows_per_page * columns;
+            const int sdf_pages = sdf_items_per_page ? (sdf_rows + (sdf_rows_per_page - 1)) / sdf_rows_per_page : 0;
+            ImVec2 sdf_panel_pos, sdf_panel_max;
+
+            if (sdf_pages)
+            {
+                ImVec2 sdf_panel_size = ImVec2((float)columns * size, (float)sdf_rows_per_page * size);
+                ImGui::ColorButton("##sdf", ImVec4(0.7f, 0.1f, 0.7f, 1.0f), ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop, sdf_panel_size);
+                sdf_panel_pos = ImGui::GetItemRectMin();
+                sdf_panel_max = ImGui::GetItemRectMax();
+
+                if (ImGui::Button("Prev Page"))
+                {
+                    m_sdfPage = std::max(0, m_sdfPage - 1);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Next Page"))
+                {
+                    m_sdfPage = std::min(sdf_pages - 1, m_sdfPage + 1);
+                }
+                ImGui::SameLine();
             }
 
             ImVec4 colOffBG(0.1f, 0.1f, 0.1f, 1.0f);
@@ -195,6 +223,51 @@ bool Project::Gui(SDL_Renderer* renderer)
                 imgPos.y = centre.y - item.h / 2 + 4;
                 ImGui::SetCursorScreenPos(imgPos);
                 ImGui::ImageWithBg((ImTextureID)item.texture, ImVec2((float)item.w, (float)item.h), ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0), colFG);
+            }
+
+            if (sdf_pages)
+            {
+                int sdf_startIdx = m_sdfPage * sdf_items_per_page;
+                int sdf_endIdx = std::min(sdf_startIdx + sdf_items_per_page, (int)m_sdfChars.size());
+                for (int idx = sdf_startIdx; idx < sdf_endIdx; idx++)
+                {
+                    auto& item = m_sdfChars[idx];
+                    ImVec4& colBG = colOnBG;
+                    ImVec4& colFG = colOnFG;
+
+                    int col = idx % columns;
+                    int row = (idx - startIdx) / columns;
+
+                    ImVec2 posMin;
+                    ImVec2 posMax;
+                    posMin.x = sdf_panel_pos.x + col * size + 2;
+                    posMin.y = sdf_panel_pos.y + row * size + 2;
+                    posMax.x = posMin.x + size - 4;
+                    posMax.y = posMin.y + size - 4;
+
+                    ImU32 colBG32 = ImGui::GetColorU32(colBG);
+                    ImU32 colFG32 = ImGui::GetColorU32(colFG);
+                    draw_list->AddRectFilled(posMin, posMax, colBG32);
+
+                    char out[16];
+                    sprintf_s(out, " %04x", item.ch);
+                    draw_list->AddText(font, 16, posMin, colFG32, out);
+
+                    ImVec2 centre;
+                    centre.x = (posMin.x + posMax.x) / 2;
+                    centre.y = (posMin.y + posMax.y) / 2 + 4;
+
+                    int useWidth = item.w / 2;
+                    int useHeight = item.h / 2;
+
+                    ImVec2 imgMin;
+                    imgMin.x = centre.x - useWidth / 2;
+                    imgMin.y = centre.y - useHeight / 2 + 4;
+                    ImVec2 imgMax;
+                    imgMax.x = imgMin.x + useWidth;
+                    imgMax.y = imgMin.y + useHeight;
+                    draw_list->AddImage(item.texture, imgMin, imgMax);
+                }
             }
             font->Scale = oldScale;
         }
@@ -271,12 +344,13 @@ void Project::GenerateFont(SDL_Renderer* renderer)
                 item.selected = it != selected.end() ? it->second : true;
 
                 SDL_Color white = { 255, 255, 255, 255 };
-                text[0] = ch;
-                SDL_Surface* surface = TTF_RenderUNICODE_Blended(font, text, white);
-                item.texture = SDL_CreateTextureFromSurface(renderer, surface);
-                SDL_SetTextureBlendMode(item.texture, SDL_BLENDMODE_BLEND);
-                SDL_FreeSurface(surface);
-                SDL_QueryTexture(item.texture, NULL, NULL, &item.w, &item.h);
+                item.surface = TTF_RenderGlyph_Blended(font, ch, white);
+                if (item.surface)
+                {
+                    item.texture = SDL_CreateTextureFromSurface(renderer, item.surface);
+                    SDL_SetTextureBlendMode(item.texture, SDL_BLENDMODE_BLEND);
+                    SDL_QueryTexture(item.texture, NULL, NULL, &item.w, &item.h);
+                }
                 m_chars.push_back(item);
             }
         }
@@ -295,6 +369,174 @@ void Project::AskForFont(SDL_Renderer* renderer)
     }
 }
 
-void Project::GenerateSDF()
-{
+#if 1
+u32 roundUp(u32 x) {
+    if (x == 0) return 1;
+    x--;
+    x |= x >> 1;
+    x |= x >> 2;
+    x |= x >> 4;
+    x |= x >> 8;
+    x |= x >> 16;
+    return x + 1;
 }
+#else
+u32 roundUp(u32 x) {
+    return (x + 31) & ~31;
+}
+#endif
+
+
+void Project::GenerateSDF(SDL_Renderer *renderer)
+{
+    // delete old SDF textures
+    for (auto& sdf : m_sdfChars)
+    {
+        if (sdf.texture)
+            SDL_DestroyTexture(sdf.texture);
+        if (sdf.surface)
+            SDL_FreeSurface(sdf.surface);
+    }
+    m_sdfChars.clear();
+
+    // generate SDF for each character
+    if (m_ttf_font)
+    {
+        for (auto& item : m_chars)
+        {
+            if (item.selected && item.surface)
+            {
+                SDL_Color white = { 255, 255, 255, 255 };
+                if (!SDL_LockSurface(item.surface))
+                {
+                    SDL_assert(item.surface->format->format == SDL_PIXELFORMAT_ARGB8888);
+
+                    PixelBlock pb_source, pb_padded, pb_sdf;
+
+                    // find crop rect
+                    pb_source.pixels = (u32*)item.surface->pixels;
+                    pb_source.pitch = item.surface->pitch;
+                    pb_source.w = item.surface->w;
+                    pb_source.h = item.surface->h;
+                    pb_source.CalcCropRect();
+
+                    pb_padded.w = pb_source.crop_w + m_sdfRange * 2;
+                    pb_padded.h = pb_source.crop_h + m_sdfRange * 2;
+
+                    SDFChar sdf;
+                    sdf.ch = item.ch;
+                    sdf.w = pb_padded.w;
+                    sdf.h = pb_padded.h;
+                    sdf.xoffset = pb_source.crop_x - m_sdfRange;
+                    sdf.yoffset = pb_source.crop_y - m_sdfRange;
+                    sdf.surface = SDL_CreateRGBSurfaceWithFormat(0, pb_padded.w, pb_padded.h, 1, SDL_PIXELFORMAT_ARGB8888);
+                    sdf.pitch = sdf.surface->pitch;
+
+                    SDL_LockSurface(sdf.surface);
+                    int size = pb_padded.w * pb_padded.h;
+                    pb_padded.pixels = (u32*)sdf.surface->pixels;
+                    pb_padded.pitch = sdf.surface->pitch;
+                    pb_padded.GenerateSDF(pb_source, m_sdfRange);
+                    SDL_UnlockSurface(sdf.surface);
+                    sdf.texture = SDL_CreateTextureFromSurface(renderer, sdf.surface);
+                    SDL_SetTextureBlendMode(sdf.texture, SDL_BLENDMODE_BLEND);
+                    SDL_LockSurface(sdf.surface);
+
+                    m_sdfChars.push_back(sdf);
+                }
+            }
+        }
+    }
+}
+
+
+void PixelBlock::CalcCropRect()
+{
+    int xmin = 0;
+    int xmax = w - 1;
+    int ymin = 0;
+    int ymax = h - 1;
+    u32* p = pixels;
+    for (int yy = 0; yy < h; yy++)
+    {
+        for (int xx = 0; xx < w; xx++)
+        {
+            if (*p++ != 0)
+            {
+                if (xx < xmin)
+                    xmin = xx;
+                if (xx > xmax)
+                    xmax = xx;
+                if (yy < ymin)
+                    ymin = yy;
+                if (yy > ymax)
+                    ymax = yy;
+            }
+        }
+    }
+    crop_x = xmin;
+    crop_y = ymin;
+    crop_w = xmax - xmin + 1;
+    crop_h = ymax - ymin + 1;
+}
+
+void PixelBlock::GenerateSDF(const PixelBlock& source, int range)
+{
+    for (int yy = 0; yy < h; yy++)
+    {
+        int ysrc = crop_y - range + yy;
+        for (int xx = 0; xx < w; xx++)
+        {
+            int xsrc = source.crop_x - range + xx;
+            int dist = source.FindDistance(xsrc, ysrc, range);
+            if (dist > -128 && dist < 128)
+            {
+                u8 nd = (u8)(dist + 128);
+                u32 out = 0xff000000 | nd | (nd << 8) | (nd << 16);
+                pixels[yy * pitch/4 + xx] = out;
+            }
+            else
+            {
+                pixels[yy + pitch/4 + xx] = 0;
+            }
+        }
+    }
+}
+
+int PixelBlock::FindDistance(int cx, int cy, int range) const
+{
+    int crop_x2 = crop_x + crop_w;
+    int crop_y2 = crop_y + crop_h;
+
+    bool pixOn = false;
+    if (cx >= crop_x && cx < crop_x2 && cy >= crop_y && cy < crop_y2)
+        pixOn = (pixels[cy * pitch/4 + cx] & 0xff000000) != 0;
+
+    int dist = 128;
+    for (int yo = -range; yo <= range; yo++)
+    {
+        int yd = cy + yo;
+        for (int xo = -range; xo <= range; xo++)
+        {
+            int xd = cx + xo;
+            
+            int distX = abs(cx - xd);
+            int distY = abs(cy - yd);
+            int distXY = distX * distX + distY * distY;
+            if (distXY > 0)
+                distXY = (int)(sqrtf((float)distXY) * 127.0f / (float)range);
+
+            bool localOn = false;
+            if (yd >= crop_y && yd < crop_y2 && xd >= crop_x && xd < crop_x2)
+            {
+                localOn = (pixels[yd * pitch/4 + xd] & 0xff000000) != 0;
+            }
+
+            if (pixOn != localOn)
+                dist = std::min(distXY, dist);
+        }
+    }
+
+    return pixOn ? dist : -dist;
+}
+
