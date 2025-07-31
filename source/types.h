@@ -1,5 +1,7 @@
 #pragma once
 
+#include <functional>
+
 typedef uint64_t        u64;
 typedef int64_t         i64;
 typedef uint32_t        u32;
@@ -11,4 +13,4 @@ typedef int8_t          i8;
 typedef float           f32;
 typedef double          f64;
 
-typedef std::function<void(void)> Callback;
+typedef std::function<void(void)> GenericTask;

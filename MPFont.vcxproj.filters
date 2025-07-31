@@ -325,6 +325,15 @@
     <ClInclude Include="source\types.h">
       <Filter>Source Files</Filter>
     </ClInclude>
+    <ClInclude Include="source\WorkerFarm.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="source\Atlas.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="source\PixelBlock.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\imgui\imgui.cpp">
@@ -361,6 +370,15 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="source\Project.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\Atlas.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\WorkerFarm.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="source\PixelBlock.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

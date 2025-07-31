@@ -13,4 +13,7 @@ typedef std::function<void(void)> GenericTask;
 
 // save general gui and tool settings to appdata
 void SaveSettings();
-void QueueTask(const GenericTask &func);
+void QueueMainThreadTask(const GenericTask &func);
+void QueueAsyncTask(const GenericTask& func);
+void WaitForAsyncTasks();
+

@@ -28,6 +28,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include "WorkerFarm.h"
 
 #if !SDL_VERSION_ATLEAST(2,0,17)
 #error This backend requires SDL 2.0.17+ because of SDL_RenderGeometry() function
@@ -45,9 +46,23 @@ struct SelectState
 } g_selectState;
 
 std::vector<GenericTask> g_tasks;
-void QueueTask(const GenericTask& func)
+std::mutex g_tasks_access;
+void QueueMainThreadTask(const GenericTask& func)
 {
+    g_tasks_access.lock();
     g_tasks.push_back(func);
+    g_tasks_access.unlock();
+}
+
+WorkerFarm gWorkers;
+void QueueAsyncTask(const GenericTask& func)
+{
+    gWorkers.QueueTask(func);
+}
+
+void WaitForAsyncTasks()
+{
+    gWorkers.WaitForTasks();
 }
 
 // new project
@@ -295,11 +310,11 @@ int main(int, char**)
             {
                 if (ImGui::MenuItem("New Project", "CTRL+N"))
                 {
-                    QueueTask([]() { NewProject(); });
+                    QueueMainThreadTask([]() { NewProject(); });
                 }
                 if (ImGui::MenuItem("Load Project", "CTRL+L"))
                 {
-                    QueueTask([renderer]() { LoadProject(renderer); SaveSettings(); });
+                    QueueMainThreadTask([renderer]() { LoadProject(renderer); SaveSettings(); });
                 }
                 ImFont* font = ImGui::GetFont();
                 if (ImGui::DragFloat("Font scale", &font->Scale, 0.005f, 0.3f, 2.0f, "%.1f"))
