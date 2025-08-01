@@ -5,10 +5,10 @@
 
 void PixelBlock::CalcCropRect()
 {
-    int xmin = 0;
-    int xmax = w - 1;
-    int ymin = 0;
-    int ymax = h - 1;
+    int xmin = w - 1;
+    int xmax = 0;
+    int ymin = h - 1;
+    int ymax = 0;
     int wpitch = pitch / 4;
     u32* base_p = pixels;
     for (int yy = 0; yy < h; yy++)
@@ -16,7 +16,7 @@ void PixelBlock::CalcCropRect()
         u32* p = base_p;
         for (int xx = 0; xx < w; xx++)
         {
-            if (*p++ != 0)
+            if (((*p++) & 0xff) != 0)
             {
                 if (xx < xmin)
                     xmin = xx;
@@ -34,6 +34,14 @@ void PixelBlock::CalcCropRect()
     crop_y = ymin;
     crop_w = xmax - xmin + 1;
     crop_h = ymax - ymin + 1;
+
+    if (crop_w <= 0 || crop_h <= 0)
+    {
+        crop_x = 0;
+        crop_y = 0;
+        crop_w = 0;
+        crop_h = 0;
+    }
 }
 
 void PixelBlock::GenerateSDF(const PixelBlock& source, int range)

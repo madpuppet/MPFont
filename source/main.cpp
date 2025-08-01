@@ -330,10 +330,10 @@ int main(int, char**)
         for (auto project : g_projects)
             project->Gui(renderer);
 
-        if (show_demo_window)
-        {
-            ImGui::ShowDemoWindow(&show_demo_window);
-        }
+//        if (show_demo_window)
+//        {
+//            ImGui::ShowDemoWindow(&show_demo_window);
+//        }
 
         // Rendering
         ImGui::Render();

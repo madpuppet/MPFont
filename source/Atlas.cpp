@@ -1,10 +1,11 @@
 #include "Atlas.h"
 #include <algorithm>
 
-void Atlas::StartLayout(int w, int h)
+void Atlas::StartLayout(int w, int h, int padding)
 {
 	m_width = w;
 	m_height = h;
+	m_padding = padding;
 	for (auto& page : m_pages)
 	{
 		if (page.m_texture)
@@ -18,10 +19,12 @@ void Atlas::StartLayout(int w, int h)
 
 void Atlas::AddBlock(u16 ch, const PixelBlock& block)
 {
+	m_access.lock();
 	auto sdf = new SDF;
 	sdf->ch = ch;
 	sdf->block = block;
 	m_blocks.push_back(sdf);
+	m_access.unlock();
 }
 
 void Atlas::FinishLayout()
@@ -81,6 +84,13 @@ bool Atlas::TryAddBlock(const PixelBlock& block, int& x, int& y)
 	if (m_pages.empty())
 		return false;
 
+	if (block.crop_w == 0 || block.crop_h == 0)
+	{
+		x = 0;
+		y = 0;
+		return true;
+	}
+
 	SDL_assert(m_pages.back().m_surface != nullptr);
 
 	// does block even fit in an empty page 
@@ -100,14 +110,14 @@ bool Atlas::TryAddBlock(const PixelBlock& block, int& x, int& y)
 	}
 
 	// does block fit vertically?
-	int finalHeight = highest + block.h;
+	int finalHeight = highest + block.crop_h;
 	if (finalHeight > m_height)
 		return false;
 
 	// mark the columns as used
 	for (int i = 0; i < block.crop_w; i++)
 	{
-		m_columnHeights[m_addPageX + i] = finalHeight;
+		m_columnHeights[m_addPageX + i] = finalHeight+m_padding;
 	}
 
 	// ok, copy that block in
@@ -135,7 +145,11 @@ bool Atlas::TryAddBlock(const PixelBlock& block, int& x, int& y)
 		src_pixels += src_pitch;
 	}
 
-	m_addPageX += block.crop_w;
+	SDL_assert(block.crop_w > 0);
+
+	m_addPageX += block.crop_w + m_padding;
+
+	SDL_assert(m_addPageX >= 0);
 
 	return true;
 }

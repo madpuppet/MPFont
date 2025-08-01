@@ -24,7 +24,7 @@ public:
 	};
 
 	void SetRenderer(SDL_Renderer* renderer) { m_renderer = renderer; }
-	void StartLayout(int w, int h);
+	void StartLayout(int w, int h, int padding);
 	void AddBlock(u16 ch, const PixelBlock &block);
 	void FinishLayout();
 	std::vector<Page>& Pages() { return m_pages; }
@@ -39,6 +39,7 @@ private:
 
 	int m_width = 0;
 	int m_height = 0;
+	int m_padding = 1;
 	
 	std::vector<Page> m_pages;
 	int m_addPageX = 0;

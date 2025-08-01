@@ -18,6 +18,7 @@ public:
     bool Gui(SDL_Renderer* renderer);
     void GenerateSDF(SDL_Renderer* renderer);
     bool CloseRequested() { return !m_open; }
+    void Export();
 
     struct Char
     {
@@ -31,6 +32,20 @@ public:
         int crop_y = 0;
         int crop_w = 0;
         int crop_h = 0;
+        int minx = 0;
+        int maxx = 0;
+        int miny = 0;
+        int maxy = 0;
+        int advance = 0;
+
+        int sdf_x = 0;
+        int sdf_y = 0;
+        int sdf_w = 0;
+        int sdf_h = 0;
+        int sdf_page = 0;
+        int sdf_xoff = 0;
+        int sdf_yoff = 0;
+        int sdf_advance = 0;
     };
 
     struct SDFChar
@@ -69,4 +84,5 @@ private:
     int m_fontSize = 16;
     int m_pageWidth = 512;
     int m_pageHeight = 512;
+    int m_padding = 2;
 };

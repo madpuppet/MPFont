@@ -20,6 +20,14 @@ void Project::LoadFromShad(const Shad& shad)
         {
             if (c->field == "font")
                 m_ttf_name = c->GetString();
+            else if (c->field == "pagewidth")
+                m_pageWidth = c->GetI32();
+            else if (c->field == "pageheight")
+                m_pageHeight = c->GetI32();
+            else if (c->field == "padding")
+                m_padding = c->GetI32();
+            else if (c->field == "sdfRange")
+                m_sdfRange = c->GetI32();
             else if (c->field == "chars")
             {
                 for (auto ch : c->children)
@@ -65,6 +73,13 @@ bool Project::Gui(SDL_Renderer* renderer)
             AskForFont(renderer);
             SaveSettings();
         }
+        ImGui::SameLine(0,100);
+        if (ImGui::Button("Save Project"))
+        {
+            Save();
+            SaveSettings();
+        }
+
         ImGui::PushItemWidth(300.0f);
         if (ImGui::SliderInt("SDF Range", &m_sdfRange, 0, 32))
         {
@@ -81,6 +96,11 @@ bool Project::Gui(SDL_Renderer* renderer)
             GenerateFont(renderer);
             SaveSettings();
         }
+        ImGui::SameLine(0, 100);
+        if (ImGui::Button("GenerateSDF"))
+        {
+            GenerateSDF(renderer);
+        }
 
         if (ImGui::InputInt("Page Width", &m_pageWidth, 64))
         {
@@ -92,10 +112,21 @@ bool Project::Gui(SDL_Renderer* renderer)
             SaveSettings();
         }
         ImGui::SameLine(0, 100);
-        if (ImGui::Button("GenerateSDF"))
+        if (ImGui::InputInt("Padding", &m_padding, 32))
         {
-            GenerateSDF(renderer);
+            SaveSettings();
         }
+
+        if (m_atlas.Pages().size() > 0)
+        {
+            ImGui::SameLine(0, 100);
+            if (ImGui::Button("Export"))
+            {
+                Export();
+                SaveSettings();
+            }
+        }
+
         ImGui::PopItemWidth();
 
         if (m_ttf_font)
@@ -103,8 +134,10 @@ bool Project::Gui(SDL_Renderer* renderer)
             float oldScale = font->Scale;
             font->Scale = 0.25f;
 
+            const int window_width = ImGui::GetWindowWidth();
+
             const int size = 64;
-            const int columns = 32;
+            const int columns = window_width / size - 1;
             const int rows = (((int)m_chars.size() + (columns - 1)) / columns);
             const int rows_per_page = std::min(rows, 16);
             const int items_per_page = rows_per_page * columns;
@@ -176,12 +209,6 @@ bool Project::Gui(SDL_Renderer* renderer)
                 for (auto& item : m_chars)
                     item.selected = true;
             }
-            ImGui::SameLine();
-            if (ImGui::Button("Save Project"))
-            {
-                Save();
-                SaveSettings();
-            }
             if (m_atlas.Pages().size() > 1)
             {
                 ImGui::SameLine();
@@ -207,7 +234,7 @@ bool Project::Gui(SDL_Renderer* renderer)
             {
                 m_sdfPage = std::min((int)m_atlas.Pages().size() - 1, m_sdfPage);
                 auto& page = m_atlas.Pages()[m_sdfPage];
-                ImGui::Image(page.m_texture, ImVec2(m_pageWidth, m_pageHeight));
+                ImGui::Image(page.m_texture, ImVec2((float)m_pageWidth, (float)m_pageHeight));
             }
 
             ImVec4 colOffBG(0.1f, 0.1f, 0.1f, 1.0f);
@@ -283,34 +310,94 @@ bool Project::Gui(SDL_Renderer* renderer)
     return m_open;
 }
 
+void Project::Export()
+{
+    std::vector<int> exportChars;
+    for (int i = 0; i < m_chars.size(); i++)
+    {
+        if (m_chars[i].selected)
+            exportChars.push_back(i);
+    }
+
+    const char* formats[] = { "*.fnt" };
+    std::filesystem::path filepath = m_name;
+    std::string export_path = filepath.stem().string() + ".fnt";
+    char* filename = tinyfd_saveFileDialog("Export", export_path.c_str(), 1, formats, nullptr);
+    if (filename)
+    {
+        std::ofstream out_file(filename);
+        if (out_file.is_open())
+        {
+            Shad shad;
+            ShadNode* root = new ShadNode;
+            root->field = "font";
+            root->values.push_back(filepath.filename().string());
+            shad.AddRoot(root);
+
+            root->AddChild("pages", std::format("{}", m_atlas.Pages().size()));
+            root->AddChild("pageWidth", std::format("{}", m_pageWidth));
+            root->AddChild("pageHeight", std::format("{}", m_pageHeight));
+            auto charsNode = root->AddChild("chars", std::format("{}", exportChars.size()));
+            for (auto i : exportChars)
+            {
+                auto& item = m_chars[i];
+                auto charNode = charsNode->AddChild("char", std::format("{}", item.ch));
+                charNode->AddChild("x", std::format("{}", item.sdf_x));
+                charNode->AddChild("y", std::format("{}", item.sdf_y));
+                charNode->AddChild("width", std::format("{}", item.sdf_w));
+                charNode->AddChild("height", std::format("{}", item.sdf_h));
+                charNode->AddChild("page", std::format("{}", item.sdf_page));
+                charNode->AddChild("xoff", std::format("{}", item.sdf_xoff));
+                charNode->AddChild("yoff", std::format("{}", item.sdf_yoff));
+                charNode->AddChild("advance", std::format("{}", item.sdf_advance));
+            }
+
+            u32 size;
+            char* mem;
+            shad.Write(mem, size);
+
+            out_file.write(mem, size);
+            out_file.close();
+        }
+    }
+}
+
 void Project::Save()
 {
     const char* formats[] = { "*.vfnt" };
     char* filename = tinyfd_saveFileDialog("Load Project", m_name.c_str(), 1, formats, nullptr);
-    std::ofstream out_file(filename);
-    if (out_file.is_open())
+    if (filename)
     {
-        m_name = filename;
-
-        Shad shad;
-        ShadNode* root = new ShadNode;
-        root->field = "mpfont";
-        root->values.push_back(m_name);
-        shad.AddRoot(root);
-        root->AddChild("font", std::format("\"{}\"", m_ttf_name));
-        auto charsNode = root->AddChild("chars");
-        for (auto& ch : m_chars)
+        std::ofstream out_file(filename);
+        if (out_file.is_open())
         {
-            auto charNode = charsNode->AddChild("char", ch.ch);
-            charNode->AddChild("selected", ch.selected);
+            m_name = filename;
+
+            Shad shad;
+            ShadNode* root = new ShadNode;
+            root->field = "mpfont";
+            root->values.push_back(m_name);
+            shad.AddRoot(root);
+            root->AddChild("font", std::format("\"{}\"", m_ttf_name));
+            root->AddChild("pagewidth", std::format("{}", m_pageWidth));
+            root->AddChild("pageheight", std::format("{}", m_pageHeight));
+            root->AddChild("padding", std::format("{}", m_padding));
+            root->AddChild("sdfRange", std::format("{}", m_sdfRange));
+
+            auto charsNode = root->AddChild("chars");
+            for (auto& ch : m_chars)
+            {
+                auto charNode = charsNode->AddChild("char", ch.ch);
+                charNode->AddChild("selected", ch.selected);
+            }
+
+            u32 size;
+            char* mem;
+            shad.Write(mem, size);
+
+            out_file.write(mem, size);
+            out_file.close();
         }
-
-        u32 size;
-        char* mem;
-        shad.Write(mem, size);
-
-        out_file.write(mem, size);
-        out_file.close();
     }
 }
 
@@ -345,10 +432,16 @@ void Project::GenerateFont(SDL_Renderer* renderer)
             // create textures for each glyph in the font
             if (TTF_GlyphIsProvided(font, ch))
             {
+                extern DECLSPEC int SDLCALL TTF_GlyphMetrics(TTF_Font * font, Uint16 ch,
+                    int* minx, int* maxx,
+                    int* miny, int* maxy, int* advance);
+
+
                 Project::Char item;
                 item.ch = ch;
                 auto it = selected.find(ch);
                 item.selected = it != selected.end() ? it->second : true;
+                TTF_GlyphMetrics(font, ch, &item.minx, &item.maxx, &item.miny, &item.maxy, &item.advance);
 
                 SDL_Color white = { 255, 255, 255, 255 };
                 item.surface = TTF_RenderGlyph_Blended(font, ch, white);
@@ -397,7 +490,7 @@ void Project::GenerateSDF(SDL_Renderer* renderer)
     if (m_ttf_font)
     {
         // clears the atlas ready to build it again
-        m_atlas.StartLayout(m_pageWidth, m_pageHeight);
+        m_atlas.StartLayout(m_pageWidth, m_pageHeight, m_padding);
 
         // delete old SDF textures
         for (auto& sdf : m_sdfChars)
