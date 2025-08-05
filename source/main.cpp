@@ -66,13 +66,17 @@ void WaitForAsyncTasks()
 }
 
 // new project
-void NewProject()
+void NewProject(SDL_Renderer* renderer)
 {
-    char* name = tinyfd_inputBox("Name of Font Project", "Enter name for font project", "my_font");
-    if (name)
+    const char* formats[] = { "*.ttf" };
+    char* filename = tinyfd_openFileDialog("Load Project from Font", "", 1, formats, nullptr, false);
+    if (filename)
     {
-        auto project = new Project(name);
+        std::filesystem::path path = filename;
+        std::string projectPath = path.stem().string() + ".mpfnt";
+        auto project = new Project(projectPath);
         g_projects.push_back(project);
+        project->SetFont(filename, renderer);
     }
 }
 
@@ -80,8 +84,10 @@ void NewProject()
 void LoadProject(const std::string& name, SDL_Renderer* renderer)
 {
     // check project isn't already loaded...
+    std::filesystem::path path = name;
+    std::string nameNoExt = path.stem().filename().string();
     for (auto proj : g_projects)
-        if (proj->Name() == name)
+        if (proj->Name() == nameNoExt)
             return;
 
     std::ifstream file(name, std::ios::binary | std::ios::ate);
@@ -106,7 +112,7 @@ void LoadProject(const std::string& name, SDL_Renderer* renderer)
 
 void LoadProject(SDL_Renderer* renderer)
 {
-    const char* formats[] = { "*.vfnt" };
+    const char* formats[] = { "*.mpfnt" };
     char* filename = tinyfd_openFileDialog("Load Project", "", 1, formats, nullptr, false);
     if (filename)
     {
@@ -118,7 +124,7 @@ void SaveSettings()
 {
     std::vector<std::string> projectList;
     for (auto project : g_projects)
-        projectList.push_back(project->Name());
+        projectList.push_back(project->Path());
     gSettings.SetProjects(projectList);
     gSettings.Save();
 }
@@ -216,6 +222,12 @@ int main(int, char**)
     for (auto& proj : projects)
         LoadProject(proj, renderer);
 
+    auto gensdf = [renderer]() {
+        for (auto& proj : g_projects)
+            proj->GenerateSDF(renderer);
+        };
+    QueueMainThreadTask(gensdf);
+
     // Main loop
     bool done = false;
     while (!done)
@@ -231,35 +243,35 @@ int main(int, char**)
             ImGui_ImplSDL2_ProcessEvent(&event);
             switch (event.type)
             {
-                case SDL_QUIT:
-                    done = true;
-                    break;
+            case SDL_QUIT:
+                done = true;
+                break;
 
-                case SDL_WINDOWEVENT:
+            case SDL_WINDOWEVENT:
+            {
+                switch (event.window.event)
                 {
-                    switch (event.window.event)
+                case SDL_WINDOWEVENT_MOVED:
+                {
+                    gSettings.Set("WindowX", (int)event.window.data1);
+                    gSettings.Set("WindowY", (int)event.window.data2);
+                    SaveSettings();
+                }
+                break;
+                case SDL_WINDOWEVENT_RESIZED:
+                {
+                    gSettings.Set("WindowWidth", (int)event.window.data1);
+                    gSettings.Set("WindowHeight", (int)event.window.data2);
+                    SaveSettings();
+                }
+                break;
+                case SDL_WINDOWEVENT_CLOSE:
+                    if (event.window.windowID == SDL_GetWindowID(window))
                     {
-                    case SDL_WINDOWEVENT_MOVED:
-                        {
-                            gSettings.Set("WindowX", (int)event.window.data1);
-                            gSettings.Set("WindowY", (int)event.window.data2);
-                            SaveSettings();
-                        }
-                        break;
-                    case SDL_WINDOWEVENT_RESIZED:
-                        {
-                            gSettings.Set("WindowWidth", (int)event.window.data1);
-                            gSettings.Set("WindowHeight", (int)event.window.data2);
-                            SaveSettings();
+                        done = true;
                     }
-                        break;
-                    case SDL_WINDOWEVENT_CLOSE:
-                        if (event.window.windowID == SDL_GetWindowID(window))
-                        {
-                            done = true;
-                        }
-                        break;
-                    }
+                    break;
+                }
             }
             break;
             }
@@ -268,12 +280,6 @@ int main(int, char**)
         {
             SDL_Delay(10);
             continue;
-        }
-
-        std::vector<GenericTask> tasks = std::move(g_tasks);
-        for (auto& task : tasks)
-        {
-            task();
         }
 
         // close any finished projects
@@ -310,7 +316,7 @@ int main(int, char**)
             {
                 if (ImGui::MenuItem("New Project", "CTRL+N"))
                 {
-                    QueueMainThreadTask([]() { NewProject(); });
+                    QueueMainThreadTask([renderer]() { NewProject(renderer); });
                 }
                 if (ImGui::MenuItem("Load Project", "CTRL+L"))
                 {
@@ -330,18 +336,27 @@ int main(int, char**)
         for (auto project : g_projects)
             project->Gui(renderer);
 
-//        if (show_demo_window)
-//        {
-//            ImGui::ShowDemoWindow(&show_demo_window);
-//        }
+        //        if (show_demo_window)
+        //        {
+        //            ImGui::ShowDemoWindow(&show_demo_window);
+        //        }
 
-        // Rendering
+                // Rendering
         ImGui::Render();
         SDL_RenderSetScale(renderer, io.DisplayFramebufferScale.x, io.DisplayFramebufferScale.y);
         SDL_SetRenderDrawColor(renderer, (Uint8)(clear_color.x * 255), (Uint8)(clear_color.y * 255), (Uint8)(clear_color.z * 255), (Uint8)(clear_color.w * 255));
         SDL_RenderClear(renderer);
         ImGui_ImplSDLRenderer2_RenderDrawData(ImGui::GetDrawData(), renderer);
         SDL_RenderPresent(renderer);
+
+        // next frame tasks
+        g_tasks_access.lock();
+        std::vector<GenericTask> tasks = std::move(g_tasks);
+        g_tasks_access.unlock();
+        for (auto& task : tasks)
+        {
+            task();
+        }
     }
 
     // Cleanup

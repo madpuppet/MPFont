@@ -8,18 +8,34 @@
 #include "imgui.h"
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
+#include <stdio.h>
+
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+
+Project::Project(const std::string& path)
+{
+    m_path = path;
+
+    std::filesystem::path fpath = path;
+    m_name = fpath.stem().filename().string();
+}
 
 void Project::LoadFromShad(const Shad& shad)
 {
     auto roots = shad.GetRoots();
-    m_ttf_name = "";
     for (auto r : roots)
     {
-        m_name = r->GetString();
         for (auto c : r->children)
         {
             if (c->field == "font")
                 m_ttf_name = c->GetString();
+            else if (c->field == "charsFolded")
+                m_isCharsFolded = c->GetBool();
+            else if (c->field == "fontSize")
+                m_fontSize = c->GetI32();
+            else if (c->field == "lineHeight")
+                m_lineHeight = c->GetI32();
             else if (c->field == "pagewidth")
                 m_pageWidth = c->GetI32();
             else if (c->field == "pageheight")
@@ -66,35 +82,49 @@ bool Project::Gui(SDL_Renderer* renderer)
 
     if (ImGui::Begin(m_name.c_str(), &m_open, flags))
     {
-        ImGui::Text("FONT");
-        ImGui::SameLine();
+        char name_buffer[64];
+        strncpy_s(name_buffer, m_name.c_str(), std::min((int)m_name.size(), 63));
+        name_buffer[63] = 0;
+        if (ImGui::InputText(m_name.c_str(), name_buffer, 64, ImGuiInputTextFlags_EnterReturnsTrue))
+        {
+            m_name = name_buffer;
+            std::filesystem::path path = m_path;
+            std::filesystem::path newFilename = m_name + ".mpfnt";
+            m_path = path.replace_filename(newFilename).string();
+            SaveSettings();
+        }
+        ImGui::PushID("font name");
         if (ImGui::Button(m_ttf_name.c_str()))
         {
             AskForFont(renderer);
-            SaveSettings();
+            Save();
         }
+        ImGui::SameLine();
+        ImGui::Text("FONT");
+
+        ImGui::PopID();
         ImGui::SameLine(0,100);
         if (ImGui::Button("Save Project"))
         {
-            Save();
-            SaveSettings();
+            SaveAs();
         }
 
         ImGui::PushItemWidth(300.0f);
         if (ImGui::SliderInt("SDF Range", &m_sdfRange, 0, 32))
         {
-            SaveSettings();
         }
         ImGui::SameLine(0,100);
-        if (ImGui::SliderInt("Font Size", &m_fontSize, 8, 64))
+        if (ImGui::SliderInt("Font Size", &m_fontSize, 8, 512))
         {
-            SaveSettings();
+        }
+        ImGui::SameLine(0, 100);
+        if (ImGui::SliderInt("Line Height", &m_lineHeight, 8, 70))
+        {
         }
         ImGui::SameLine(0, 100);
         if (ImGui::Button("GenerateFont"))
         {
             GenerateFont(renderer);
-            SaveSettings();
         }
         ImGui::SameLine(0, 100);
         if (ImGui::Button("GenerateSDF"))
@@ -104,17 +134,14 @@ bool Project::Gui(SDL_Renderer* renderer)
 
         if (ImGui::InputInt("Page Width", &m_pageWidth, 64))
         {
-            SaveSettings();
         }
         ImGui::SameLine(0, 100);
         if (ImGui::InputInt("Page Height", &m_pageHeight, 64))
         {
-            SaveSettings();
         }
         ImGui::SameLine(0, 100);
         if (ImGui::InputInt("Padding", &m_padding, 32))
         {
-            SaveSettings();
         }
 
         if (m_atlas.Pages().size() > 0)
@@ -134,84 +161,206 @@ bool Project::Gui(SDL_Renderer* renderer)
             float oldScale = font->Scale;
             font->Scale = 0.25f;
 
-            const int window_width = ImGui::GetWindowWidth();
+            const float window_width = ImGui::GetWindowWidth();
 
             const int size = 64;
-            const int columns = window_width / size - 1;
+            const int columns = std::max((int)(window_width / size - 1), 8);
             const int rows = (((int)m_chars.size() + (columns - 1)) / columns);
             const int rows_per_page = std::min(rows, 16);
             const int items_per_page = rows_per_page * columns;
             const int pages = (rows + (rows_per_page - 1)) / rows_per_page;
 
-            ImVec2 panel_size = ImVec2((float)columns * size, (float)rows_per_page * size);
-            ImGui::ColorButton("##chars", ImVec4(0.7f, 0.1f, 0.7f, 1.0f), ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop, panel_size);
-            ImVec2 panel_pos = ImGui::GetItemRectMin();
-            ImVec2 panel_max = ImGui::GetItemRectMax();
-
-            if (m_isSelecting)
+            if (ImGui::CollapsingHeader("Selected Chars", m_isCharsFolded ? 0 : ImGuiTreeNodeFlags_DefaultOpen))
             {
-                if (ImGui::IsKeyDown(ImGuiKey::ImGuiKey_MouseLeft))
+                m_isCharsFolded = false;
+
+                ImVec2 panel_size = ImVec2((float)columns * size, (float)rows_per_page * size);
+                ImGui::ColorButton("##chars", ImVec4(0.7f, 0.1f, 0.7f, 1.0f), ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop, panel_size);
+                ImVec2 panel_pos = ImGui::GetItemRectMin();
+                ImVec2 panel_max = ImGui::GetItemRectMax();
+
+                if (m_isSelecting)
                 {
-                    if (io.MousePos.x >= panel_pos.x && io.MousePos.x < panel_max.x && io.MousePos.y >= panel_pos.y && io.MousePos.y < panel_max.y)
+                    if (ImGui::IsKeyDown(ImGuiKey::ImGuiKey_MouseLeft))
                     {
-                        int mc = (int)(io.MousePos.x - panel_pos.x) / size;
-                        int mr = (int)(io.MousePos.y - panel_pos.y) / size;
-                        int idx = m_page * items_per_page + mr * columns + mc;
-                        if (idx < (int)m_chars.size())
+                        if (io.MousePos.x >= panel_pos.x && io.MousePos.x < panel_max.x && io.MousePos.y >= panel_pos.y && io.MousePos.y < panel_max.y)
                         {
-                            m_chars[idx].selected = m_isEnabling;
+                            int mc = (int)(io.MousePos.x - panel_pos.x) / size;
+                            int mr = (int)(io.MousePos.y - panel_pos.y) / size;
+                            int idx = m_page * items_per_page + mr * columns + mc;
+                            if (idx < (int)m_chars.size())
+                            {
+                                m_chars[idx].selected = m_isEnabling;
+                            }
                         }
+                    }
+                    else
+                    {
+                        m_isSelecting = false;
                     }
                 }
                 else
                 {
-                    m_isSelecting = false;
+                    if (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey::ImGuiKey_MouseLeft, false))
+                    {
+                        if (io.MousePos.x >= panel_pos.x && io.MousePos.x < panel_max.x && io.MousePos.y >= panel_pos.y && io.MousePos.y < panel_max.y)
+                        {
+                            int mc = (int)(io.MousePos.x - panel_pos.x) / size;
+                            int mr = (int)(io.MousePos.y - panel_pos.y) / size;
+                            int idx = m_page * items_per_page + mr * columns + mc;
+                            if (idx < (int)m_chars.size())
+                            {
+                                m_isSelecting = true;
+                                m_isEnabling = !m_chars[idx].selected;
+                                m_startIdx = idx;
+                                m_chars[idx].selected = m_isEnabling;
+                            }
+                        }
+                    }
+                }
+
+                ImVec4 colOffBG(0.1f, 0.1f, 0.1f, 1.0f);
+                ImVec4 colOnBG(0.3f, 0.3f, 0.3f, 1.0f);
+                ImVec4 colOffFG(0.5f, 0.5f, 0.5f, 1.0f);
+                ImVec4 colOnFG(1.0f, 1.0f, 1.0f, 1.0f);
+
+                ImDrawList* draw_list = ImGui::GetWindowDrawList();
+                int startIdx = m_page * items_per_page;
+                int endIdx = std::min(startIdx + items_per_page, (int)m_chars.size());
+                for (int idx = startIdx; idx < endIdx; idx++)
+                {
+                    auto& item = m_chars[idx];
+                    ImVec4& colBG = item.selected ? colOnBG : colOffBG;
+                    ImVec4& colFG = item.selected ? colOnFG : colOffFG;
+
+                    int col = idx % columns;
+                    int row = (idx - startIdx) / columns;
+
+                    ImVec2 posMin;
+                    ImVec2 posMax;
+                    posMin.x = panel_pos.x + col * size + 2;
+                    posMin.y = panel_pos.y + row * size + 2;
+                    posMax.x = posMin.x + size - 4;
+                    posMax.y = posMin.y + size - 4;
+
+                    ImU32 colBG32 = ImGui::GetColorU32(colBG);
+                    ImU32 colFG32 = ImGui::GetColorU32(colFG);
+                    draw_list->AddRectFilled(posMin, posMax, colBG32);
+
+                    char out[16];
+                    sprintf_s(out, " %04x", item.ch);
+                    draw_list->AddText(font, 16, posMin, colFG32, out);
+
+                    ImVec2 areaCentre((posMin.x + posMax.x) / 2, (posMin.y + 15 + posMax.y) / 2);
+                    float areaHalfSize = (size - 30) / 2;
+                    ImVec2 areaMin(areaCentre.x - areaHalfSize, areaCentre.y - areaHalfSize);
+                    ImVec2 areaMax(areaCentre.x + areaHalfSize, areaCentre.y + areaHalfSize);
+
+                    ImVec2 centre;
+                    centre.x = (areaMin.x + areaMax.x) / 2;
+                    centre.y = (areaMin.y + areaMax.y) / 2 + 4;
+
+                    if (item.h > 0)
+                    {
+                        float aspectRatio = (float)item.w / (float)item.h;
+                        int useWidth, useHeight;
+                        if (aspectRatio > 1.0f)
+                        {
+                            useWidth = (int)(areaMax.x - areaMin.x);
+                            useHeight = (int)((areaMax.y - areaMin.y) / aspectRatio);
+                        }
+                        else
+                        {
+                            useHeight = (int)(areaMax.y - areaMin.y);
+                            useWidth = (int)((areaMax.x - areaMin.x) * aspectRatio);
+                        }
+
+                        ImVec2 imgMin;
+                        imgMin.x = centre.x - useWidth / 2;
+                        imgMin.y = centre.y - useHeight / 2;
+                        ImVec2 imgMax;
+                        imgMax.x = imgMin.x + useWidth;
+                        imgMax.y = imgMin.y + useHeight;
+                        draw_list->AddImage(item.texture, imgMin, imgMax, ImVec2(0, 0), ImVec2(1, 1), colFG32);
+                    }
+                }
+                if (ImGui::Button("Prev Chars"))
+                {
+                    m_page = std::max(0, m_page - 1);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Next Chars"))
+                {
+                    m_page = std::min(pages - 1, m_page + 1);
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Clear All"))
+                {
+                    for (auto& item : m_chars)
+                        item.selected = false;
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Select All"))
+                {
+                    for (auto& item : m_chars)
+                        item.selected = true;
                 }
             }
             else
             {
-                if (ImGui::IsWindowFocused() && ImGui::IsKeyPressed(ImGuiKey::ImGuiKey_MouseLeft, false))
-                {
-                    if (io.MousePos.x >= panel_pos.x && io.MousePos.x < panel_max.x && io.MousePos.y >= panel_pos.y && io.MousePos.y < panel_max.y)
-                    {
-                        int mc = (int)(io.MousePos.x - panel_pos.x) / size;
-                        int mr = (int)(io.MousePos.y - panel_pos.y) / size;
-                        int idx = m_page * items_per_page + mr * columns + mc;
-                        if (idx < (int)m_chars.size())
-                        {
-                            m_isSelecting = true;
-                            m_isEnabling = !m_chars[idx].selected;
-                            m_startIdx = idx;
-                            m_chars[idx].selected = m_isEnabling;
-                        }
-                    }
-                }
+                m_isCharsFolded = true;
             }
 
-            if (ImGui::Button("Prev Chars"))
+            if (m_atlas.Pages().size() > 0)
             {
-                m_page = std::max(0, m_page - 1);
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Next Chars"))
-            {
-                m_page = std::min(pages - 1, m_page + 1);
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Clear All"))
-            {
-                for (auto& item : m_chars)
-                    item.selected = false;
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Select All"))
-            {
-                for (auto& item : m_chars)
-                    item.selected = true;
+                const float window_width = ImGui::GetWindowWidth();
+                m_sdfPage = std::min((int)m_atlas.Pages().size() - 1, m_sdfPage);
+                auto& page = m_atlas.Pages()[m_sdfPage];
+                ImGui::Image(page.m_texture, ImVec2((float)m_pageWidth, (float)m_pageHeight));
+                ImVec2 sdf_pos = ImGui::GetItemRectMin();
+                ImVec2 sdf_max = ImGui::GetItemRectMax();
+
+                if (ImGui::IsWindowFocused() && ImGui::IsKeyDown(ImGuiKey::ImGuiKey_MouseRight))
+                {
+                    float xnorm = ((float)io.MousePos.x - sdf_pos.x) / (float)(sdf_max.x - sdf_pos.x);
+                    float ynorm = ((float)io.MousePos.y - sdf_pos.y) / (float)(sdf_max.y - sdf_pos.y);
+                    if (xnorm >= 0 && xnorm <= 1.0f && ynorm >= 0 && ynorm <= 1.0f)
+                    {
+                        m_sdf_zoom_x = xnorm;
+                        m_sdf_zoom_y = ynorm;
+                    }
+                }
+
+                float d = 25.0f / (float)m_sdf_zoom;
+                float u1 = m_sdf_zoom_x - d;
+                float u2 = m_sdf_zoom_x + d;
+                float v1 = m_sdf_zoom_y - d;
+                float v2 = m_sdf_zoom_y + d;
+                if (u1 < 0)
+                {
+                    u2 -= u1;
+                    u1 = 0.0f;
+                }
+                else if (u2 > 1.0f)
+                {
+                    u1 -= (u2 - 1.0f);
+                    u2 = 1.0f;
+                }
+                if (v1 < 0)
+                {
+                    v2 -= v1;
+                    v1 = 0.0f;
+                }
+                else if (v2 > 1.0f)
+                {
+                    v1 -= (v2 - 1.0f);
+                    v2 = 1.0f;
+                }
+                ImGui::SameLine();
+                ImGui::Image(page.m_texture, ImVec2(512.0f, 512.0f), ImVec2(u1, v1), ImVec2(u2, v2));
             }
             if (m_atlas.Pages().size() > 1)
             {
-                ImGui::SameLine();
                 if (ImGui::Button("Prev Page"))
                 {
                     if (m_atlas.Pages().size() > 1)
@@ -229,79 +378,14 @@ bool Project::Gui(SDL_Renderer* renderer)
                     }
                     SaveSettings();
                 }
+                ImGui::SameLine();
             }
-            if (m_atlas.Pages().size() > 0)
+            ImGui::PushItemWidth(300.0f);
+            if (ImGui::SliderInt("Zoom", &m_sdf_zoom, 200, 10000))
             {
-                m_sdfPage = std::min((int)m_atlas.Pages().size() - 1, m_sdfPage);
-                auto& page = m_atlas.Pages()[m_sdfPage];
-                ImGui::Image(page.m_texture, ImVec2((float)m_pageWidth, (float)m_pageHeight));
+                SaveSettings();
             }
-
-            ImVec4 colOffBG(0.1f, 0.1f, 0.1f, 1.0f);
-            ImVec4 colOnBG(0.3f, 0.3f, 0.3f, 1.0f);
-            ImVec4 colOffFG(0.5f, 0.5f, 0.5f, 1.0f);
-            ImVec4 colOnFG(1.0f, 1.0f, 1.0f, 1.0f);
-
-            ImDrawList* draw_list = ImGui::GetWindowDrawList();
-            int startIdx = m_page * items_per_page;
-            int endIdx = std::min(startIdx + items_per_page, (int)m_chars.size());
-            for (int idx = startIdx; idx < endIdx; idx++)
-            {
-                auto& item = m_chars[idx];
-                ImVec4& colBG = item.selected ? colOnBG : colOffBG;
-                ImVec4& colFG = item.selected ? colOnFG : colOffFG;
-
-                int col = idx % columns;
-                int row = (idx - startIdx) / columns;
-
-                ImVec2 posMin;
-                ImVec2 posMax;
-                posMin.x = panel_pos.x + col * size + 2;
-                posMin.y = panel_pos.y + row * size + 2;
-                posMax.x = posMin.x + size - 4;
-                posMax.y = posMin.y + size - 4;
-
-                ImU32 colBG32 = ImGui::GetColorU32(colBG);
-                ImU32 colFG32 = ImGui::GetColorU32(colFG);
-                draw_list->AddRectFilled(posMin, posMax, colBG32);
-
-                char out[16];
-                sprintf_s(out, " %04x", item.ch);
-                draw_list->AddText(font, 16, posMin, colFG32, out);
-
-                ImVec2 areaCentre((posMin.x + posMax.x) / 2, (posMin.y + 15 + posMax.y) / 2);
-                float areaHalfSize = (size - 30) / 2;
-                ImVec2 areaMin(areaCentre.x - areaHalfSize, areaCentre.y - areaHalfSize);
-                ImVec2 areaMax(areaCentre.x + areaHalfSize, areaCentre.y + areaHalfSize);
-
-                ImVec2 centre;
-                centre.x = (areaMin.x + areaMax.x) / 2;
-                centre.y = (areaMin.y + areaMax.y) / 2 + 4;
-
-                if (item.h > 0)
-                {
-                    float aspectRatio = (float)item.w / (float)item.h;
-                    int useWidth, useHeight;
-                    if (aspectRatio > 1.0f)
-                    {
-                        useWidth = (int)(areaMax.x - areaMin.x);
-                        useHeight = (int)((areaMax.y - areaMin.y) / aspectRatio);
-                    }
-                    else
-                    {
-                        useHeight = (int)(areaMax.y - areaMin.y);
-                        useWidth = (int)((areaMax.x - areaMin.x) * aspectRatio);
-                    }
-
-                    ImVec2 imgMin;
-                    imgMin.x = centre.x - useWidth / 2;
-                    imgMin.y = centre.y - useHeight / 2;
-                    ImVec2 imgMax;
-                    imgMax.x = imgMin.x + useWidth;
-                    imgMax.y = imgMin.y + useHeight;
-                    draw_list->AddImage(item.texture, imgMin, imgMax, ImVec2(0, 0), ImVec2(1, 1), colFG32);
-                }
-            }
+            ImGui::PopItemWidth();
 
             font->Scale = oldScale;
         }
@@ -310,18 +394,17 @@ bool Project::Gui(SDL_Renderer* renderer)
     return m_open;
 }
 
+// Custom write function to append data to a vector
+static void write_to_memory(void* context, void* data, int size) {
+    std::vector<uint8_t>* buffer = static_cast<std::vector<uint8_t>*>(context);
+    buffer->insert(buffer->end(), static_cast<uint8_t*>(data), static_cast<uint8_t*>(data) + size);
+}
+
 void Project::Export()
 {
-    std::vector<int> exportChars;
-    for (int i = 0; i < m_chars.size(); i++)
-    {
-        if (m_chars[i].selected)
-            exportChars.push_back(i);
-    }
-
     const char* formats[] = { "*.fnt" };
     std::filesystem::path filepath = m_name;
-    std::string export_path = filepath.stem().string() + ".fnt";
+    std::string export_path = (filepath.parent_path() / filepath.stem()).string() + ".fnt";
     char* filename = tinyfd_saveFileDialog("Export", export_path.c_str(), 1, formats, nullptr);
     if (filename)
     {
@@ -337,19 +420,17 @@ void Project::Export()
             root->AddChild("pages", std::format("{}", m_atlas.Pages().size()));
             root->AddChild("pageWidth", std::format("{}", m_pageWidth));
             root->AddChild("pageHeight", std::format("{}", m_pageHeight));
-            auto charsNode = root->AddChild("chars", std::format("{}", exportChars.size()));
-            for (auto i : exportChars)
+            root->AddChild("fontSize", std::format("{}", m_fontSize));
+            root->AddChild("lineHeight", std::format("{}", m_lineHeight));
+            auto charsNode = root->AddChild("chars", std::format("{}", m_sdfChars.size()));
+            for (auto item : m_sdfChars)
             {
-                auto& item = m_chars[i];
                 auto charNode = charsNode->AddChild("char", std::format("{}", item.ch));
-                charNode->AddChild("x", std::format("{}", item.sdf_x));
-                charNode->AddChild("y", std::format("{}", item.sdf_y));
-                charNode->AddChild("width", std::format("{}", item.sdf_w));
-                charNode->AddChild("height", std::format("{}", item.sdf_h));
-                charNode->AddChild("page", std::format("{}", item.sdf_page));
-                charNode->AddChild("xoff", std::format("{}", item.sdf_xoff));
-                charNode->AddChild("yoff", std::format("{}", item.sdf_yoff));
-                charNode->AddChild("advance", std::format("{}", item.sdf_advance));
+                charNode->AddChild("pos", std::format("{},{}", item.x, item.y));
+                charNode->AddChild("size", std::format("{},{}", item.w, item.h));
+                charNode->AddChild("page", std::format("{}", item.page));
+                charNode->AddChild("offset", std::format("{},{}", item.xoffset, item.yoffset));
+                charNode->AddChild("advance", std::format("{}", item.advance));
             }
 
             u32 size;
@@ -358,46 +439,83 @@ void Project::Export()
 
             out_file.write(mem, size);
             out_file.close();
+        }
+
+        for (int p=0; p<m_atlas.Pages().size(); p++)
+        {
+            auto& page = m_atlas.Pages()[p];
+            u32* data = new u32[page.m_surface->w * page.m_surface->h];
+            u32* src = (u32*)page.m_surface->pixels;
+            u32* out = data;
+            for (int y = 0; y < page.m_surface->h; y++)
+            {
+                for (int x = 0; x < page.m_surface->w; x++)
+                {
+                    u32 value = src[x];
+                    *out++ = value;
+                }
+                src += page.m_surface->pitch/4;
+            }
+
+            std::vector<uint8_t> png_buffer;
+            stbi_write_png_to_func(write_to_memory, &png_buffer, page.m_surface->w, page.m_surface->h, 4, data, page.m_surface->w*4);
+
+            std::filesystem::path export_filepath = filename;
+            std::string export_path = (export_filepath.parent_path() / export_filepath.stem()).string() + std::format("_page{}.png", p);
+            std::ofstream out_file(export_path, std::ios::binary);
+            if (out_file.is_open())
+            {
+                out_file.write((const char *)png_buffer.data(), png_buffer.size());
+                out_file.close();
+            }
         }
     }
 }
 
 void Project::Save()
 {
-    const char* formats[] = { "*.vfnt" };
-    char* filename = tinyfd_saveFileDialog("Load Project", m_name.c_str(), 1, formats, nullptr);
+    std::ofstream out_file(m_path);
+    if (out_file.is_open())
+    {
+        std::filesystem::path path = m_path;
+        m_name = path.filename().string();
+
+        Shad shad;
+        ShadNode* root = new ShadNode;
+        root->field = "mpfnt";
+        shad.AddRoot(root);
+        root->AddChild("font", m_ttf_name);
+        root->AddChild("charsFolded", std::format("{}", m_isCharsFolded));
+        root->AddChild("fontSize", std::format("{}", m_fontSize));
+        root->AddChild("pagewidth", std::format("{}", m_pageWidth));
+        root->AddChild("pageheight", std::format("{}", m_pageHeight));
+        root->AddChild("padding", std::format("{}", m_padding));
+        root->AddChild("sdfRange", std::format("{}", m_sdfRange));
+        root->AddChild("zoom", std::format("{}", m_sdf_zoom));
+
+        auto charsNode = root->AddChild("chars");
+        for (auto& ch : m_chars)
+        {
+            auto charNode = charsNode->AddChild("char", ch.ch);
+            charNode->AddChild("selected", ch.selected);
+        }
+
+        u32 size;
+        char* mem;
+        shad.Write(mem, size);
+
+        out_file.write(mem, size);
+        out_file.close();
+    }
+}
+void Project::SaveAs()
+{
+    const char* formats[] = { "*.mpfnt" };
+    char* filename = tinyfd_saveFileDialog("Save Project", m_path.c_str(), 1, formats, nullptr);
     if (filename)
     {
-        std::ofstream out_file(filename);
-        if (out_file.is_open())
-        {
-            m_name = filename;
-
-            Shad shad;
-            ShadNode* root = new ShadNode;
-            root->field = "mpfont";
-            root->values.push_back(m_name);
-            shad.AddRoot(root);
-            root->AddChild("font", std::format("\"{}\"", m_ttf_name));
-            root->AddChild("pagewidth", std::format("{}", m_pageWidth));
-            root->AddChild("pageheight", std::format("{}", m_pageHeight));
-            root->AddChild("padding", std::format("{}", m_padding));
-            root->AddChild("sdfRange", std::format("{}", m_sdfRange));
-
-            auto charsNode = root->AddChild("chars");
-            for (auto& ch : m_chars)
-            {
-                auto charNode = charsNode->AddChild("char", ch.ch);
-                charNode->AddChild("selected", ch.selected);
-            }
-
-            u32 size;
-            char* mem;
-            shad.Write(mem, size);
-
-            out_file.write(mem, size);
-            out_file.close();
-        }
+        m_path = filename;
+        Save();
     }
 }
 
@@ -472,6 +590,12 @@ void Project::GenerateFont(SDL_Renderer* renderer)
     }
 }
 
+void Project::SetFont(const std::string& path, SDL_Renderer* renderer)
+{
+    m_ttf_name = path;
+    GenerateFont(renderer);
+}
+
 void Project::AskForFont(SDL_Renderer* renderer)
 {
     const char* formats[] = { "*.ttf" };
@@ -508,8 +632,10 @@ void Project::GenerateSDF(SDL_Renderer* renderer)
                 sdf.ch = item.ch;
                 sdf.w = item.crop_w + m_sdfRange * 2;
                 sdf.h = item.crop_h + m_sdfRange * 2;
-                sdf.xoffset = item.crop_x - m_sdfRange;
-                sdf.yoffset = item.crop_y - m_sdfRange;
+                sdf.xoffset = item.crop_x - m_sdfRange + item.minx;
+                sdf.yoffset = item.crop_y - m_sdfRange + item.miny;
+                sdf.advance = item.advance;
+
                 sdf.surface = SDL_CreateRGBSurfaceWithFormat(0, sdf.w, sdf.h, 1, SDL_PIXELFORMAT_ARGB8888);
                 sdf.pitch = sdf.surface->pitch;
                 SDL_LockSurface(sdf.surface);
@@ -543,7 +669,18 @@ void Project::GenerateSDF(SDL_Renderer* renderer)
 
         WaitForAsyncTasks();
 
-        m_atlas.FinishLayout();
+        std::vector<LayoutPos> posList;
+        m_atlas.FinishLayout(posList);
+
+        for (auto& p : posList)
+        {
+            int ch = p.ch;
+            auto pred = [ch](const SDFChar& item)->bool { return ch == item.ch; };
+            auto it = std::find_if(m_sdfChars.begin(), m_sdfChars.end(), pred);
+            SDL_assert(it != m_sdfChars.end());
+            it->x = p.x;
+            it->y = p.y;
+        }
     }
 }
 

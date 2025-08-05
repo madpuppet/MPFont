@@ -131,6 +131,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="resource.h" />
     <ClInclude Include="source\Atlas.h" />
     <ClInclude Include="source\imgui\imconfig.h" />
     <ClInclude Include="source\imgui\imgui.h" />
@@ -234,6 +235,8 @@
     <ClInclude Include="source\sdl2\include\SDL_vulkan.h" />
     <ClInclude Include="source\settings.h" />
     <ClInclude Include="source\SHAD.h" />
+    <ClInclude Include="source\stb_image.h" />
+    <ClInclude Include="source\stb_image_write.h" />
     <ClInclude Include="source\tinydialog\tinyfiledialogs.h" />
     <ClInclude Include="source\types.h" />
     <ClInclude Include="source\WorkerFarm.h" />
@@ -260,6 +263,12 @@
     <None Include="source\sdl2\include\SDL_config.h.cmake" />
     <None Include="source\sdl2\include\SDL_config.h.in" />
     <None Include="source\sdl2\include\SDL_config_macosx.h.orig" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="MPFont.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="mpfont.ico" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

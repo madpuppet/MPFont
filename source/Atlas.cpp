@@ -27,12 +27,18 @@ void Atlas::AddBlock(u16 ch, const PixelBlock& block)
 	m_access.unlock();
 }
 
-void Atlas::FinishLayout()
+void Atlas::FinishLayout(std::vector<LayoutPos>& layoutPos)
 {
+	auto presort_compare = [](const SDF* a, const SDF* b) -> bool
+		{
+			return a->ch < b->ch;
+		};
+
 	auto compare = [](const SDF* a, const SDF* b) -> bool
 		{
 			return a->block.crop_h < b->block.crop_h;
 		};
+	std::sort(m_blocks.begin(), m_blocks.end(), presort_compare);
 	std::sort(m_blocks.begin(), m_blocks.end(), compare);
 
 	for (auto sdf : m_blocks)
@@ -46,6 +52,11 @@ void Atlas::FinishLayout()
 				SDL_assert(false);
 			}
 		}
+		LayoutPos pos;
+		pos.ch = sdf->ch;
+		pos.x = x;
+		pos.y = y;
+		layoutPos.push_back(pos);
 	}
 
 	for (auto& page : m_pages)

@@ -9,6 +9,13 @@
 
 struct PixelBlock;
 
+struct LayoutPos
+{
+	int ch;
+	int x;
+	int y;
+};
+
 class Atlas
 {
 public:
@@ -26,7 +33,7 @@ public:
 	void SetRenderer(SDL_Renderer* renderer) { m_renderer = renderer; }
 	void StartLayout(int w, int h, int padding);
 	void AddBlock(u16 ch, const PixelBlock &block);
-	void FinishLayout();
+	void FinishLayout(std::vector<LayoutPos> &layoutPos);
 	std::vector<Page>& Pages() { return m_pages; }
 
 private:

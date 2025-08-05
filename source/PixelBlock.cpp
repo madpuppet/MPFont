@@ -80,6 +80,9 @@ int PixelBlock::FindDistance(int cx, int cy, int range) const
     if (cx >= crop_x && cx < crop_x2 && cy >= crop_y && cy < crop_y2)
         pixOn = (pixels[cy * pitch / 4 + cx] & 0xff000000) != 0;
 
+    float fcx = (float)cx + 0.5f;
+    float fcy = (float)cy + 0.5f;
+
     int dist = 128;
     for (int yo = -range; yo <= range; yo++)
     {
@@ -87,12 +90,15 @@ int PixelBlock::FindDistance(int cx, int cy, int range) const
         for (int xo = -range; xo <= range; xo++)
         {
             int xd = cx + xo;
+            float fx = (float)xd + 0.5f;
+            float fy = (float)yd + 0.5f;
+            float dfx = fx - fcx;
+            float dfy = fy - fcy;
+            float distXY_pixels = sqrtf(dfx * dfx + dfy * dfy);
+            if (pixOn)
+                distXY_pixels -= 1.0f;
 
-            int distX = abs(cx - xd);
-            int distY = abs(cy - yd);
-            int distXY = distX * distX + distY * distY;
-            if (distXY > 0)
-                distXY = (int)(sqrtf((float)distXY) * 127.0f / (float)range);
+            float distXY = range ? distXY_pixels / (float)range * 127.0f : 127.0f;
 
             bool localOn = false;
             if (yd >= crop_y && yd < crop_y2 && xd >= crop_x && xd < crop_x2)
@@ -101,7 +107,7 @@ int PixelBlock::FindDistance(int cx, int cy, int range) const
             }
 
             if (pixOn != localOn)
-                dist = std::min(distXY, dist);
+                dist = std::min((int)distXY, dist);
         }
     }
 

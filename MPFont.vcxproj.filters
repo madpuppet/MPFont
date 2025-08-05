@@ -334,6 +334,13 @@
     <ClInclude Include="source\PixelBlock.h">
       <Filter>Source Files</Filter>
     </ClInclude>
+    <ClInclude Include="source\stb_image.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="source\stb_image_write.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="resource.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="source\imgui\imgui.cpp">
@@ -395,5 +402,11 @@
     <None Include="source\sdl2\include\SDL_config_macosx.h.orig">
       <Filter>SDL2</Filter>
     </None>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="MPFont.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="mpfont.ico" />
   </ItemGroup>
 </Project>
