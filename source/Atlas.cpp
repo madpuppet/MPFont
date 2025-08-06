@@ -56,6 +56,8 @@ void Atlas::FinishLayout(std::vector<LayoutPos>& layoutPos)
 		pos.ch = sdf->ch;
 		pos.x = x;
 		pos.y = y;
+		pos.w = sdf->block.crop_w;
+		pos.h = sdf->block.crop_h;
 		layoutPos.push_back(pos);
 	}
 

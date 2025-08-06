@@ -14,6 +14,8 @@ struct LayoutPos
 	int ch;
 	int x;
 	int y;
+	int w;
+	int h;
 };
 
 class Atlas

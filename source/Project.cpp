@@ -628,20 +628,26 @@ void Project::GenerateSDF(SDL_Renderer* renderer)
         {
             if (item.selected && item.surface)
             {
+                PixelBlock large_sdf;
+                large_sdf.w = item.crop_w + m_sdfRange * 2;
+                large_sdf.h = item.crop_h + m_sdfRange * 2;
+                large_sdf.pitch = large_sdf.w * 4;
+                large_sdf.pixels = new u32[large_sdf.w * large_sdf.h];
+
                 SDFChar sdf;
                 sdf.ch = item.ch;
-                sdf.w = item.crop_w + m_sdfRange * 2;
-                sdf.h = item.crop_h + m_sdfRange * 2;
-                sdf.xoffset = item.crop_x - m_sdfRange + item.minx;
-                sdf.yoffset = item.crop_y - m_sdfRange + item.miny;
-                sdf.advance = item.advance;
+                sdf.w = large_sdf.w / 16;
+                sdf.h = large_sdf.h / 16;
+                sdf.xoffset = (item.crop_x - m_sdfRange + item.minx) / 16;
+                sdf.yoffset = (item.crop_y - m_sdfRange + item.miny) / 16;
+                sdf.advance = item.advance / 16;
 
                 sdf.surface = SDL_CreateRGBSurfaceWithFormat(0, sdf.w, sdf.h, 1, SDL_PIXELFORMAT_ARGB8888);
                 sdf.pitch = sdf.surface->pitch;
                 SDL_LockSurface(sdf.surface);
                 m_sdfChars.push_back(sdf);
 
-                auto work = [this, sdf, item]()
+                auto work = [this, large_sdf, sdf, item]() mutable
                     {
                         PixelBlock pb_source;
                         pb_source.pixels = (u32*)item.surface->pixels;
@@ -653,13 +659,17 @@ void Project::GenerateSDF(SDL_Renderer* renderer)
                         pb_source.crop_w = item.crop_w;
                         pb_source.crop_h = item.crop_h;
 
+                        large_sdf.GenerateSDF(pb_source, m_sdfRange);
+                        large_sdf.CalcCropRect();
+
                         PixelBlock pb_sdf;
                         pb_sdf.pixels = (u32*)sdf.surface->pixels;
                         pb_sdf.w = sdf.surface->w;
                         pb_sdf.h = sdf.surface->h;
                         pb_sdf.pitch = sdf.surface->pitch;
-                        pb_sdf.GenerateSDF(pb_source, m_sdfRange);
+                        pb_sdf.BicubicScale(large_sdf);
                         pb_sdf.CalcCropRect();
+
                         m_atlas.AddBlock(item.ch, pb_sdf);
                     };
 
@@ -680,6 +690,8 @@ void Project::GenerateSDF(SDL_Renderer* renderer)
             SDL_assert(it != m_sdfChars.end());
             it->x = p.x;
             it->y = p.y;
+            it->w = p.w;
+            it->h = p.h;
         }
     }
 }

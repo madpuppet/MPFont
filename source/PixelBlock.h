@@ -16,4 +16,5 @@ struct PixelBlock
     void CalcCropRect();
     void GenerateSDF(const PixelBlock& source, int range);
     int FindDistance(int xx, int yy, int range) const;
+    void BicubicScale(const PixelBlock& source);
 };
