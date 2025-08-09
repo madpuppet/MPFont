@@ -55,13 +55,22 @@ void QueueMainThreadTask(const GenericTask& func)
 }
 
 WorkerFarm gWorkers;
-void QueueAsyncTask(const GenericTask& func)
+void QueueAsyncTaskLP(const GenericTask& func)
 {
-    gWorkers.QueueTask(func);
+    gWorkers.QueueLowPriorityTask(func);
+}
+void QueueAsyncTaskHP(const GenericTask& func)
+{
+    gWorkers.QueueHighPriorityTask(func);
 }
 
 void WaitForAsyncTasks()
 {
+    gWorkers.WaitForTasks();
+}
+void AbortAsyncTasks()
+{
+    gWorkers.Abort();
     gWorkers.WaitForTasks();
 }
 
@@ -221,12 +230,6 @@ int main(int, char**)
     auto projects = gSettings.GetProjects();
     for (auto& proj : projects)
         LoadProject(proj, renderer);
-
-    auto gensdf = [renderer]() {
-        for (auto& proj : g_projects)
-            proj->GenerateSDF(renderer);
-        };
-    QueueMainThreadTask(gensdf);
 
     // Main loop
     bool done = false;

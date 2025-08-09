@@ -17,48 +17,37 @@ void Atlas::StartLayout(int w, int h, int padding)
 	m_blocks.clear();
 }
 
-void Atlas::AddBlock(u16 ch, const PixelBlock& block)
+void Atlas::AddBlock(FontChar *item)
 {
 	m_access.lock();
-	auto sdf = new SDF;
-	sdf->ch = ch;
-	sdf->block = block;
-	m_blocks.push_back(sdf);
+	m_blocks.push_back(item);
 	m_access.unlock();
 }
 
-void Atlas::FinishLayout(std::vector<LayoutPos>& layoutPos)
+void Atlas::FinishLayout()
 {
-	auto presort_compare = [](const SDF* a, const SDF* b) -> bool
+	auto presort_compare = [](const FontChar* a, const FontChar* b) -> bool
 		{
 			return a->ch < b->ch;
 		};
 
-	auto compare = [](const SDF* a, const SDF* b) -> bool
+	auto compare = [](const FontChar* a, const FontChar* b) -> bool
 		{
-			return a->block.crop_h < b->block.crop_h;
+			return a->pb_scaledSDF.h < b->pb_scaledSDF.h;
 		};
 	std::sort(m_blocks.begin(), m_blocks.end(), presort_compare);
 	std::sort(m_blocks.begin(), m_blocks.end(), compare);
 
-	for (auto sdf : m_blocks)
+	for (auto item : m_blocks)
 	{
-		int x, y;
-		if (!TryAddBlock(sdf->block, x, y))
+		if (!TryAddBlock(item))
 		{
 			AddNewPage();
-			if (!TryAddBlock(sdf->block, x, y))
+			if (!TryAddBlock(item))
 			{
 				SDL_assert(false);
 			}
 		}
-		LayoutPos pos;
-		pos.ch = sdf->ch;
-		pos.x = x;
-		pos.y = y;
-		pos.w = sdf->block.crop_w;
-		pos.h = sdf->block.crop_h;
-		layoutPos.push_back(pos);
 	}
 
 	for (auto& page : m_pages)
@@ -85,50 +74,50 @@ void Atlas::AddNewPage()
 	u32* pixels = (u32*)page.m_surface->pixels;
 	while (size--)
 	{
-		*pixels++ = 0xff000000;
+		*pixels++ = 0x00ffffff;
 	}
 
 	m_addPageX = 0;
 }
 
-bool Atlas::TryAddBlock(const PixelBlock& block, int& x, int& y)
+bool Atlas::TryAddBlock(FontChar *item)
 {
 	// got any pages allocated yet?
 	if (m_pages.empty())
 		return false;
 
-	if (block.crop_w == 0 || block.crop_h == 0)
+	int w = item->pb_scaledSDF.crop_w;
+	int h = item->pb_scaledSDF.crop_h;
+
+	if (w == 0 || h == 0 || w > m_width || h > m_height)
 	{
-		x = 0;
-		y = 0;
+		item->x = 0;
+		item->y = 0;
+		item->page = 0;
 		return true;
 	}
 
 	SDL_assert(m_pages.back().m_surface != nullptr);
 
-	// does block even fit in an empty page 
-	if (block.crop_w > m_width || block.crop_h > m_height)
-		return false;
-
 	// any space for a block...?
 	// does it fit horizontally?
-	if ((m_addPageX + block.crop_w) > m_width)
+	if ((m_addPageX + w) > m_width)
 		m_addPageX = 0;
 
 	// find highest column
 	int highest = 0;
-	for (int i = 0; i < block.crop_w; i++)
+	for (int i = 0; i < w; i++)
 	{
 		highest = std::max(highest, m_columnHeights[m_addPageX + i]);
 	}
 
 	// does block fit vertically?
-	int finalHeight = highest + block.crop_h;
+	int finalHeight = highest + h;
 	if (finalHeight > m_height)
 		return false;
 
 	// mark the columns as used
-	for (int i = 0; i < block.crop_w; i++)
+	for (int i = 0; i < w; i++)
 	{
 		m_columnHeights[m_addPageX + i] = finalHeight+m_padding;
 	}
@@ -139,18 +128,23 @@ bool Atlas::TryAddBlock(const PixelBlock& block, int& x, int& y)
 	u32* dest_pixels = (u32*)dest_surface->pixels;
 	dest_pixels += highest * dest_pitch;
 
-	int src_pitch = block.pitch / 4;
-	u32* src_pixels = block.pixels;
-	src_pixels += block.crop_y * src_pitch;
+	int src_pitch = w;
+	u32* src_pixels = item->pb_scaledSDF.pixels;
 
-	x = m_addPageX;
-	y = highest;
-
-	for (int yy = 0; yy < block.crop_h; yy++)
+	float scalar = item->scaledSize / 512.0f;
+	item->x = m_addPageX;
+	item->y = highest;
+	item->w = w;
+	item->h = h;
+	item->xoffset = (int)((item->pb_source.crop_x - SDFRange) * scalar);
+	item->yoffset = (int)((item->pb_source.h - item->pb_source.crop_y - item->pb_source.crop_h + SDFRange) * scalar);
+	item->advance = (int)(item->large_advance * scalar);
+		
+	for (int yy = 0; yy < h; yy++)
 	{
 		u32* dest = &dest_pixels[m_addPageX];
-		u32* src = &src_pixels[block.crop_x];
-		for (int xx = 0; xx < block.crop_w; xx++)
+		u32* src = &src_pixels[item->pb_scaledSDF.crop_x];
+		for (int xx = 0; xx < w; xx++)
 		{
 			*dest++ = *src++;
 		}
@@ -158,9 +152,7 @@ bool Atlas::TryAddBlock(const PixelBlock& block, int& x, int& y)
 		src_pixels += src_pitch;
 	}
 
-	SDL_assert(block.crop_w > 0);
-
-	m_addPageX += block.crop_w + m_padding;
+	m_addPageX += w + m_padding;
 
 	SDL_assert(m_addPageX >= 0);
 

@@ -110,7 +110,7 @@ void PixelBlock::CalcCropRect()
         u32* p = base_p;
         for (int xx = 0; xx < w; xx++)
         {
-            if (((*p++) & 0xff) != 0)
+            if (((*p++) & 0xff000000) != 0)
             {
                 if (xx < xmin)
                     xmin = xx;
@@ -142,20 +142,20 @@ void PixelBlock::GenerateSDF(const PixelBlock& source, int range)
 {
     for (int yy = 0; yy < h; yy++)
     {
-        int ysrc = crop_y - range + yy;
+        int ysrc = source.crop_y - range + yy;
         for (int xx = 0; xx < w; xx++)
         {
             int xsrc = source.crop_x - range + xx;
             int dist = source.FindDistance(xsrc, ysrc, range);
             if (dist > -128 && dist < 128)
             {
-                u8 nd = (u8)(dist + 128);
-                u32 out = 0xff000000 | nd | (nd << 8) | (nd << 16);
+                u32 nd = dist + 128;
+                u32 out = nd << 24 | 0xffffff;
                 pixels[yy * pitch / 4 + xx] = out;
             }
             else if (dist <= -127)
             {
-                pixels[yy * pitch / 4 + xx] = 0xff000000;
+                pixels[yy * pitch / 4 + xx] = 0x00ffffff;
             }
             else
             {
@@ -207,3 +207,23 @@ int PixelBlock::FindDistance(int cx, int cy, int range) const
 
     return pixOn ? dist : -dist;
 }
+
+
+void PixelBlock::Dump()
+{
+    char* line = new char[w+1];
+    line[w] = 0;
+    for (int y = 0; y < h; y++)
+    {
+        for (int x = 0; x < w; x++)
+        {
+            u8 val = (pixels[y * (pitch / 4) + x] & 0xff000000) >> 24;
+            if (x >= crop_x && x < crop_x+crop_w && y >= crop_y && y < crop_y+crop_h)
+                line[x] = val ? 'a'+(val/16) : '.';
+            else
+                line[x] = val ? 'A'+(val/16) : '*';
+        }
+        SDL_Log(line);
+    }
+}
+

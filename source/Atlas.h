@@ -6,6 +6,7 @@
 #include <SDL.h>
 #include "SDL_Surface.h"
 #include "PixelBlock.h"
+#include "FontChar.h"
 
 struct PixelBlock;
 
@@ -34,12 +35,12 @@ public:
 
 	void SetRenderer(SDL_Renderer* renderer) { m_renderer = renderer; }
 	void StartLayout(int w, int h, int padding);
-	void AddBlock(u16 ch, const PixelBlock &block);
-	void FinishLayout(std::vector<LayoutPos> &layoutPos);
+	void AddBlock(FontChar *item);
+	void FinishLayout();
 	std::vector<Page>& Pages() { return m_pages; }
 
 private:
-	bool TryAddBlock(const PixelBlock &block, int &x, int &y);
+	bool TryAddBlock(FontChar *item);
 	void AddNewPage();
 
 	SDL_Renderer* m_renderer = nullptr;
@@ -54,7 +55,7 @@ private:
 	int m_addPageX = 0;
 
 	// blocks queued for layout before being sorted
-	std::vector<SDF*> m_blocks;
+	std::vector<FontChar*> m_blocks;
 	// current height of each column
 	std::vector<int> m_columnHeights;
 };

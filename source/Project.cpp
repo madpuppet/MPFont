@@ -9,6 +9,9 @@
 #include "imgui_impl_sdl2.h"
 #include "imgui_impl_sdlrenderer2.h"
 #include <stdio.h>
+#include <set>
+#include "FontChar.h"
+#include "SDL_ttf.h"
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
@@ -42,13 +45,11 @@ void Project::LoadFromShad(const Shad& shad)
                 m_pageHeight = c->GetI32();
             else if (c->field == "padding")
                 m_padding = c->GetI32();
-            else if (c->field == "sdfRange")
-                m_sdfRange = c->GetI32();
             else if (c->field == "chars")
             {
                 for (auto ch : c->children)
                 {
-                    Project::Char new_ch;
+                    FontChar new_ch;
                     new_ch.ch = ch->GetI32();
                     for (auto subch : ch->children)
                     {
@@ -64,8 +65,11 @@ void Project::LoadFromShad(const Shad& shad)
 
 Project::~Project()
 {
-    if (m_ttf_font)
-        TTF_CloseFont(m_ttf_font);
+    if (m_ttf_font_small)
+    {
+        TTF_CloseFont(m_ttf_font_small);
+        TTF_CloseFont(m_ttf_font_large);
+    }
     for (auto& ch : m_chars)
     {
         if (ch.texture)
@@ -110,21 +114,12 @@ bool Project::Gui(SDL_Renderer* renderer)
         }
 
         ImGui::PushItemWidth(300.0f);
-        if (ImGui::SliderInt("SDF Range", &m_sdfRange, 0, 32))
-        {
-        }
-        ImGui::SameLine(0,100);
-        if (ImGui::SliderInt("Font Size", &m_fontSize, 8, 512))
+        if (ImGui::SliderInt("Font Size", &m_fontSize, 8, 64))
         {
         }
         ImGui::SameLine(0, 100);
         if (ImGui::SliderInt("Line Height", &m_lineHeight, 8, 70))
         {
-        }
-        ImGui::SameLine(0, 100);
-        if (ImGui::Button("GenerateFont"))
-        {
-            GenerateFont(renderer);
         }
         ImGui::SameLine(0, 100);
         if (ImGui::Button("GenerateSDF"))
@@ -156,8 +151,16 @@ bool Project::Gui(SDL_Renderer* renderer)
 
         ImGui::PopItemWidth();
 
-        if (m_ttf_font)
+        if (m_ttf_font_small)
         {
+            std::vector<u32> statusColors;
+            statusColors.push_back(ImGui::GetColorU32(ImVec4(1.0f, 0, 0, 1)));         // Empty
+            statusColors.push_back(ImGui::GetColorU32(ImVec4(0.0f, 0.5f, 0, 1)));      // GeneratedSource
+            statusColors.push_back(ImGui::GetColorU32(ImVec4(0.0f, 0.5f, 1.0f, 1)));   // GeneratingLargeSDF
+            statusColors.push_back(ImGui::GetColorU32(ImVec4(1.0f, 0.5f, 1.0f, 1)));   // GeneratedLargeSDF
+            statusColors.push_back(ImGui::GetColorU32(ImVec4(1.0f, 0.0f, 1.0f, 1)));   // GeneratingScaledSDF
+            statusColors.push_back(ImGui::GetColorU32(ImVec4(0.0f, 1.0f, 0.0f, 1)));   // GeneratedScaledSDF
+
             float oldScale = font->Scale;
             font->Scale = 0.25f;
 
@@ -260,9 +263,16 @@ bool Project::Gui(SDL_Renderer* renderer)
                     centre.x = (areaMin.x + areaMax.x) / 2;
                     centre.y = (areaMin.y + areaMax.y) / 2 + 4;
 
-                    if (item.h > 0)
+                    if (item.sourceState == FontChar::Empty)
                     {
-                        float aspectRatio = (float)item.w / (float)item.h;
+                        GenerateCharItem(item, renderer);
+                    }
+                    else if (item.texture)
+                    {
+                        if (item.selected && item.sourceState == FontChar::GeneratedSource)
+                            GenerateCharItem(item, renderer);
+
+                        float aspectRatio = (float)item.surface->w / (float)item.surface->h;
                         int useWidth, useHeight;
                         if (aspectRatio > 1.0f)
                         {
@@ -283,6 +293,20 @@ bool Project::Gui(SDL_Renderer* renderer)
                         imgMax.y = imgMin.y + useHeight;
                         draw_list->AddImage(item.texture, imgMin, imgMax, ImVec2(0, 0), ImVec2(1, 1), colFG32);
                     }
+
+                    ImVec4 rectCol(1.0f, 0.0f, 0.0f, 1.0f);
+                    if (item.sourceState == FontChar::GeneratedScaledSDF)
+                    {
+                        rectCol = ImVec4(0.0f, 1.0f, 0.0f, 1.0f);
+                    }
+
+                    ImVec2 statusMin;
+                    statusMin.x = posMax.x - 8.0f;
+                    statusMin.y = posMax.y - 8.0f;
+                    ImVec2 statusMax;
+                    statusMax.x = posMax.x - 2.0f;
+                    statusMax.y = posMax.y - 2.0f;
+                    draw_list->AddRectFilled(statusMin, statusMax, statusColors[(int)item.sourceState]);
                 }
                 if (ImGui::Button("Prev Chars"))
                 {
@@ -310,6 +334,34 @@ bool Project::Gui(SDL_Renderer* renderer)
             {
                 m_isCharsFolded = true;
             }
+
+            ImGui::InputText("SAMPLE", m_sampleBuffer, 64);
+            ImGui::ColorButton("##sample", ImVec4(0.1f, 0.2f, 0.3f, 1.0f), ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoDragDrop, ImVec2(2000.0f,96.0f));
+            ImVec2 sample_min = ImGui::GetItemRectMin();
+            ImVec2 sample_max = ImGui::GetItemRectMax();
+            for (int chidx = 0; m_sampleBuffer[chidx]; chidx++)
+            {
+                char ch = m_sampleBuffer[chidx];
+                auto it = std::find_if(m_chars.begin(), m_chars.end(), [ch](FontChar &fc)->bool {return fc.ch == (u16)ch; });
+                if (it != m_chars.end())
+                {
+                    float scale = 32.0f / 96.0f;
+                    if (it->sourceState == FontChar::Empty)
+                    {
+                        GenerateCharItem(*it, renderer);
+                    }
+                    else
+                    {
+                        ImDrawList* draw_list = ImGui::GetWindowDrawList();
+                        ImVec2 imgMin(sample_min.x, sample_min.y);
+                        ImVec2 imgMax(sample_min.x + it->largeSurface->w * scale, sample_min.y + it->largeSurface->h * scale);
+                        draw_list->AddImage(it->texture, imgMin, imgMax, ImVec2(0, 0), ImVec2(1, 1), 0xffffffff);
+                    }
+                    sample_min.x += it->large_advance * scale;
+                    sample_max.x += it->large_advance * scale;
+                }
+            }
+
 
             if (m_atlas.Pages().size() > 0)
             {
@@ -422,15 +474,18 @@ void Project::Export()
             root->AddChild("pageHeight", std::format("{}", m_pageHeight));
             root->AddChild("fontSize", std::format("{}", m_fontSize));
             root->AddChild("lineHeight", std::format("{}", m_lineHeight));
-            auto charsNode = root->AddChild("chars", std::format("{}", m_sdfChars.size()));
-            for (auto item : m_sdfChars)
+            auto charsNode = root->AddChild("chars", std::format("{}", m_chars.size()));
+            for (auto &item : m_chars)
             {
-                auto charNode = charsNode->AddChild("char", std::format("{}", item.ch));
-                charNode->AddChild("pos", std::format("{},{}", item.x, item.y));
-                charNode->AddChild("size", std::format("{},{}", item.w, item.h));
-                charNode->AddChild("page", std::format("{}", item.page));
-                charNode->AddChild("offset", std::format("{},{}", item.xoffset, item.yoffset));
-                charNode->AddChild("advance", std::format("{}", item.advance));
+                if (item.selected)
+                {
+                    auto charNode = charsNode->AddChild("char", std::format("{}", item.ch));
+                    charNode->AddChild("pos", std::format("{},{}", item.x, item.y));
+                    charNode->AddChild("size", std::format("{},{}", item.w, item.h));
+                    charNode->AddChild("page", std::format("{}", item.page));
+                    charNode->AddChild("offset", std::format("{},{}", item.xoffset, item.yoffset));
+                    charNode->AddChild("advance", std::format("{}", item.advance));
+                }
             }
 
             u32 size;
@@ -490,7 +545,6 @@ void Project::Save()
         root->AddChild("pagewidth", std::format("{}", m_pageWidth));
         root->AddChild("pageheight", std::format("{}", m_pageHeight));
         root->AddChild("padding", std::format("{}", m_padding));
-        root->AddChild("sdfRange", std::format("{}", m_sdfRange));
         root->AddChild("zoom", std::format("{}", m_sdf_zoom));
 
         auto charsNode = root->AddChild("chars");
@@ -524,17 +578,26 @@ void Project::GenerateFont(SDL_Renderer* renderer)
     if (m_ttf_name.empty())
         return;
 
-    std::map<int, bool> selected;
-    for (auto ch : m_chars)
-        selected[ch.ch] = ch.selected;
+    AbortAsyncTasks();
 
-    TTF_Font* font = TTF_OpenFont(m_ttf_name.c_str(), m_fontSize);
-    if (font)
+    std::set<int> selected;
+    for (auto &item : m_chars)
     {
-        if (m_ttf_font)
+        if (item.selected)
+            selected.insert(item.ch);
+    }
+
+    TTF_Font* font_small = TTF_OpenFont(m_ttf_name.c_str(), 32);
+    TTF_Font* font_large = TTF_OpenFont(m_ttf_name.c_str(), 512);
+    if (font_small && font_large)
+    {
+        if (m_ttf_font_small)
         {
-            TTF_CloseFont(m_ttf_font);
-            m_ttf_font = nullptr;
+            TTF_CloseFont(m_ttf_font_small);
+            TTF_CloseFont(m_ttf_font_large);
+            m_ttf_font_small = nullptr;
+            m_ttf_font_large = nullptr;
+
             for (auto item : m_chars)
             {
                 SDL_DestroyTexture(item.texture);
@@ -542,56 +605,96 @@ void Project::GenerateFont(SDL_Renderer* renderer)
         }
         m_chars.clear();
 
-        SDL_Color white = { 255, 255, 255, 255 };
-        u16 text[2];
-        text[1] = 0;
+        // just create all placeholders
         for (u16 ch = 1; ch < 0xffff; ch++)
         {
-            // create textures for each glyph in the font
-            if (TTF_GlyphIsProvided(font, ch))
+            if (TTF_GlyphIsProvided(font_small, ch))
             {
-                extern DECLSPEC int SDLCALL TTF_GlyphMetrics(TTF_Font * font, Uint16 ch,
-                    int* minx, int* maxx,
-                    int* miny, int* maxy, int* advance);
-
-
-                Project::Char item;
+                FontChar item;
                 item.ch = ch;
-                auto it = selected.find(ch);
-                item.selected = it != selected.end() ? it->second : true;
-                TTF_GlyphMetrics(font, ch, &item.minx, &item.maxx, &item.miny, &item.maxy, &item.advance);
-
-                SDL_Color white = { 255, 255, 255, 255 };
-                item.surface = TTF_RenderGlyph_Blended(font, ch, white);
-                if (item.surface)
-                {
-                    item.texture = SDL_CreateTextureFromSurface(renderer, item.surface);
-                    SDL_assert(item.surface->format->format == SDL_PIXELFORMAT_ARGB8888);
-
-                    SDL_SetTextureBlendMode(item.texture, SDL_BLENDMODE_BLEND);
-                    SDL_QueryTexture(item.texture, NULL, NULL, &item.w, &item.h);
-                    SDL_LockSurface(item.surface);
-
-                    PixelBlock pb;
-                    pb.pixels = (u32*)item.surface->pixels;
-                    pb.w = item.surface->w;
-                    pb.h = item.surface->h;
-                    pb.pitch = item.surface->pitch;
-                    pb.CalcCropRect();
-                    item.crop_x = pb.crop_x;
-                    item.crop_y = pb.crop_y;
-                    item.crop_w = pb.crop_w;
-                    item.crop_h = pb.crop_h;
-                }
+                item.selected = selected.contains(ch);
                 m_chars.push_back(item);
             }
         }
-        m_ttf_font = font;
+
+        m_ttf_font_small = font_small;
+        m_ttf_font_large = font_large;
+    }
+}
+
+void Project::GenerateCharItem(FontChar &item, SDL_Renderer* renderer)
+{
+    auto func = [renderer, &item, fontSize = m_fontSize]()
+    {
+        // generate the SDF (512 size with 32 range SDF)
+        // this only needs to be generated once by character
+        // if the font size changes, we just scale this to a different size
+        if (item.sourceState == FontChar::GeneratingLargeSDF)
+        {
+            item.pb_source.pixels = (u32*)item.largeSurface->pixels;
+            item.pb_source.w = item.largeSurface->w;
+            item.pb_source.h = item.largeSurface->h;
+            item.pb_source.pitch = item.largeSurface->pitch;
+            item.pb_source.CalcCropRect();
+            item.pb_SDF.w = item.pb_source.crop_w + SDFRange*2;
+            item.pb_SDF.h = item.pb_source.crop_h + SDFRange*2;
+            item.pb_SDF.pitch = item.pb_SDF.w * 4;
+            item.pb_SDF.pixels = new u32[item.pb_SDF.w * item.pb_SDF.h];
+
+            item.pb_SDF.GenerateSDF(item.pb_source, SDFRange);
+            item.pb_SDF.CalcCropRect();
+            item.sourceState = FontChar::GeneratedLargeSDF;
+        }
+
+        // generate scaled SDF if we haven't generated it for the current font size
+        SDL_assert(item.sourceState == FontChar::GeneratedLargeSDF || item.sourceState == FontChar::GeneratedScaledSDF);
+
+        if (item.sourceState != FontChar::GeneratingScaledSDF && (item.sourceState != FontChar::GeneratedScaledSDF || item.scaledSize != fontSize))
+        {
+            // scale the large SDF to fontsize
+            float scalar = (float)fontSize / 512.0f;
+            item.pb_scaledSDF.w = (int)(item.pb_SDF.w * scalar);
+            item.pb_scaledSDF.h = (int)(item.pb_SDF.h * scalar);
+            item.pb_scaledSDF.pixels = new u32[item.pb_scaledSDF.w * item.pb_scaledSDF.h];
+            item.pb_scaledSDF.pitch = item.pb_scaledSDF.w * 4;
+            item.pb_scaledSDF.BicubicScale(item.pb_SDF);
+            item.pb_scaledSDF.CalcCropRect();
+            item.scaledSize = fontSize;
+            item.sourceState = FontChar::GeneratedScaledSDF;
+        }
+    };
+
+    if (item.sourceState == FontChar::Empty)
+    {
+        SDL_Color white = { 255, 255, 255, 255 };
+        item.surface = TTF_RenderGlyph_Blended(m_ttf_font_small, item.ch, white);
+        if (item.surface)
+        {
+            item.texture = SDL_CreateTextureFromSurface(renderer, item.surface);
+            item.largeSurface = TTF_RenderGlyph_Blended(m_ttf_font_large, item.ch, white);
+            SDL_SetTextureBlendMode(item.texture, SDL_BLENDMODE_BLEND);
+            SDL_LockSurface(item.surface);
+            SDL_LockSurface(item.largeSurface);
+            TTF_GlyphMetrics(m_ttf_font_large, item.ch, &item.large_minx, &item.large_maxx, &item.large_miny, &item.large_maxy, &item.large_advance);
+        }
+
+        // we'll be generating the large SDF next on thread
+        item.sourceState = FontChar::GeneratedSource;
+    }
+
+    // crop the preview
+    if (item.surface && item.selected)
+    {
+        if (item.sourceState == FontChar::GeneratedSource)
+            item.sourceState = FontChar::GeneratingLargeSDF;
+        QueueAsyncTaskHP(func);
     }
 }
 
 void Project::SetFont(const std::string& path, SDL_Renderer* renderer)
 {
+    AbortAsyncTasks();
+
     m_ttf_name = path;
     GenerateFont(renderer);
 }
@@ -610,89 +713,35 @@ void Project::AskForFont(SDL_Renderer* renderer)
 
 void Project::GenerateSDF(SDL_Renderer* renderer)
 {
-    // generate SDF for each character
-    if (m_ttf_font)
+    if (!m_ttf_font_large)
+        return;
+
+    // now wait for all tasks to finish
+    WaitForAsyncTasks();
+
+    // first make sure every selected character has a highrez font and an SDF
+    for (auto& item : m_chars)
     {
-        // clears the atlas ready to build it again
-        m_atlas.StartLayout(m_pageWidth, m_pageHeight, m_padding);
-
-        // delete old SDF textures
-        for (auto& sdf : m_sdfChars)
+        if (item.selected)
         {
-            if (sdf.surface)
-                SDL_FreeSurface(sdf.surface);
-        }
-        m_sdfChars.clear();
-
-        for (auto& item : m_chars)
-        {
-            if (item.selected && item.surface)
-            {
-                PixelBlock large_sdf;
-                large_sdf.w = item.crop_w + m_sdfRange * 2;
-                large_sdf.h = item.crop_h + m_sdfRange * 2;
-                large_sdf.pitch = large_sdf.w * 4;
-                large_sdf.pixels = new u32[large_sdf.w * large_sdf.h];
-
-                SDFChar sdf;
-                sdf.ch = item.ch;
-                sdf.w = large_sdf.w / 16;
-                sdf.h = large_sdf.h / 16;
-                sdf.xoffset = (item.crop_x - m_sdfRange + item.minx) / 16;
-                sdf.yoffset = (item.crop_y - m_sdfRange + item.miny) / 16;
-                sdf.advance = item.advance / 16;
-
-                sdf.surface = SDL_CreateRGBSurfaceWithFormat(0, sdf.w, sdf.h, 1, SDL_PIXELFORMAT_ARGB8888);
-                sdf.pitch = sdf.surface->pitch;
-                SDL_LockSurface(sdf.surface);
-                m_sdfChars.push_back(sdf);
-
-                auto work = [this, large_sdf, sdf, item]() mutable
-                    {
-                        PixelBlock pb_source;
-                        pb_source.pixels = (u32*)item.surface->pixels;
-                        pb_source.w = item.surface->w;
-                        pb_source.h = item.surface->h;
-                        pb_source.pitch = item.surface->pitch;
-                        pb_source.crop_x = item.crop_x;
-                        pb_source.crop_y = item.crop_y;
-                        pb_source.crop_w = item.crop_w;
-                        pb_source.crop_h = item.crop_h;
-
-                        large_sdf.GenerateSDF(pb_source, m_sdfRange);
-                        large_sdf.CalcCropRect();
-
-                        PixelBlock pb_sdf;
-                        pb_sdf.pixels = (u32*)sdf.surface->pixels;
-                        pb_sdf.w = sdf.surface->w;
-                        pb_sdf.h = sdf.surface->h;
-                        pb_sdf.pitch = sdf.surface->pitch;
-                        pb_sdf.BicubicScale(large_sdf);
-                        pb_sdf.CalcCropRect();
-
-                        m_atlas.AddBlock(item.ch, pb_sdf);
-                    };
-
-                QueueAsyncTask(work);
-            }
-        }
-
-        WaitForAsyncTasks();
-
-        std::vector<LayoutPos> posList;
-        m_atlas.FinishLayout(posList);
-
-        for (auto& p : posList)
-        {
-            int ch = p.ch;
-            auto pred = [ch](const SDFChar& item)->bool { return ch == item.ch; };
-            auto it = std::find_if(m_sdfChars.begin(), m_sdfChars.end(), pred);
-            SDL_assert(it != m_sdfChars.end());
-            it->x = p.x;
-            it->y = p.y;
-            it->w = p.w;
-            it->h = p.h;
+            GenerateCharItem(item, renderer);
         }
     }
+
+    // now wait for all tasks to finish
+    WaitForAsyncTasks();
+
+    // clears the atlas ready to build it again
+    m_atlas.StartLayout(m_pageWidth, m_pageHeight, m_padding);
+
+    for (auto& item : m_chars)
+    {
+        if (item.selected)
+        {
+            m_atlas.AddBlock(&item);
+        }
+    }
+
+    m_atlas.FinishLayout();
 }
 

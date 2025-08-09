@@ -133,6 +133,7 @@
   <ItemGroup>
     <ClInclude Include="resource.h" />
     <ClInclude Include="source\Atlas.h" />
+    <ClInclude Include="source\FontChar.h" />
     <ClInclude Include="source\imgui\imconfig.h" />
     <ClInclude Include="source\imgui\imgui.h" />
     <ClInclude Include="source\imgui\imgui_impl_sdl2.h" />
