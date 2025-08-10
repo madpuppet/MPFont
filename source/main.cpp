@@ -144,6 +144,8 @@ int main(int, char**)
     bool showDemo = false;
     gSettings.Load();
 
+    InitPosCheckArray();
+
     // Setup SDL
 #ifdef _WIN32
     ::SetProcessDPIAware();

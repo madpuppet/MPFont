@@ -345,7 +345,7 @@ bool Project::Gui(SDL_Renderer* renderer)
                 auto it = std::find_if(m_chars.begin(), m_chars.end(), [ch](FontChar &fc)->bool {return fc.ch == (u16)ch; });
                 if (it != m_chars.end())
                 {
-                    float scale = 32.0f / 96.0f;
+                    float scale = 16.0f / 96.0f;
                     if (it->sourceState == FontChar::Empty)
                     {
                         GenerateCharItem(*it, renderer);
@@ -361,7 +361,6 @@ bool Project::Gui(SDL_Renderer* renderer)
                     sample_max.x += it->large_advance * scale;
                 }
             }
-
 
             if (m_atlas.Pages().size() > 0)
             {
@@ -636,12 +635,13 @@ void Project::GenerateCharItem(FontChar &item, SDL_Renderer* renderer)
             item.pb_source.h = item.largeSurface->h;
             item.pb_source.pitch = item.largeSurface->pitch;
             item.pb_source.CalcCropRect();
+            item.pbdf_source.Generate(item.pb_source);
             item.pb_SDF.w = item.pb_source.crop_w + SDFRange*2;
             item.pb_SDF.h = item.pb_source.crop_h + SDFRange*2;
             item.pb_SDF.pitch = item.pb_SDF.w * 4;
             item.pb_SDF.pixels = new u32[item.pb_SDF.w * item.pb_SDF.h];
 
-            item.pb_SDF.GenerateSDF(item.pb_source, SDFRange);
+            item.pb_SDF.GenerateSDF(item.pb_source, item.pbdf_source, SDFRange);
             item.pb_SDF.CalcCropRect();
             item.sourceState = FontChar::GeneratedLargeSDF;
         }

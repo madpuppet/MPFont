@@ -34,10 +34,11 @@ struct FontChar
     int large_advance = 0;
 
     // SDF calculations...
-    SDL_Surface* largeSurface = nullptr;        // large source surface (512)
+    SDL_Surface* largeSurface = nullptr;         // large source surface (512)
     PixelBlock pb_source;                        // generate SDF size (512)
     PixelBlock pb_SDF;                           // SDF + 32 pixel border...
     PixelBlock pb_scaledSDF;                     // bicubic sampled down to 'fontsize'
+    PixelBlockDistanceFinder pbdf_source;        // accelerate FindDistance for source;
 
     // final render data
     int scaledSize = 0;

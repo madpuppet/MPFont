@@ -12,6 +12,37 @@
 #include <cmath>
 #include <algorithm>
 #include <memory>
+#include <string>
+#include <format>
+
+struct PosCheck
+{
+    int xo, yo;
+    float dist;
+};
+
+std::vector<PosCheck> g_posChecks;
+
+void InitPosCheckArray()
+{
+    for (int yo = -32; yo <= 32; yo++)
+    {
+        for (int xo = -32; xo <= 32; xo++)
+        {
+            if (xo == 0 && yo == 0)
+                continue;
+
+            float dist = (int)sqrtf((float)(xo * xo + yo * yo)) / 32.0f * 127.0f;
+            if (dist < 128.0f)
+                g_posChecks.emplace_back(xo, yo, dist);
+        }
+    }
+
+    std::sort(g_posChecks.begin(), g_posChecks.end(), [](const PosCheck& a, const PosCheck& b)->bool { return a.dist < b.dist; });
+}
+
+
+
 
 // Mitchell-Netravali cubic filter
 float cubicFilter(float x) {
@@ -138,15 +169,26 @@ void PixelBlock::CalcCropRect()
     }
 }
 
-void PixelBlock::GenerateSDF(const PixelBlock& source, int range)
+void PixelBlock::GenerateSDF(const PixelBlock& source, const PixelBlockDistanceFinder &sourceDF, int range)
 {
+#if 0
+    SDL_Log("OLD");
+    int distA = source.FindDistance(180, 157, range);
+    SDL_Log("NEW");
+    int distB = sourceDF.FindDistance(180, 157, range);
+    SDL_Log("%d / %d", distA, distB);
+    exit(0);
+#endif
+
     for (int yy = 0; yy < h; yy++)
     {
         int ysrc = source.crop_y - range + yy;
         for (int xx = 0; xx < w; xx++)
         {
             int xsrc = source.crop_x - range + xx;
-            int dist = source.FindDistance(xsrc, ysrc, range);
+//            int dist = source.FindDistance(xsrc, ysrc, range);
+//            int dist = sourceDF.FindDistance(xsrc, ysrc, range);
+            int dist = sourceDF.FindDistance2(xsrc, ysrc, range);
             if (dist > -128 && dist < 128)
             {
                 u32 nd = dist + 128;
@@ -172,7 +214,7 @@ int PixelBlock::FindDistance(int cx, int cy, int range) const
 
     bool pixOn = false;
     if (cx >= crop_x && cx < crop_x2 && cy >= crop_y && cy < crop_y2)
-        pixOn = (pixels[cy * pitch / 4 + cx] & 0xff000000) != 0;
+        pixOn = (pixels[cy * pitch / 4 + cx] >> 24) >= 0x80;
 
     float fcx = (float)cx;
     float fcy = (float)cy;
@@ -197,11 +239,15 @@ int PixelBlock::FindDistance(int cx, int cy, int range) const
             bool localOn = false;
             if (yd >= crop_y && yd < crop_y2 && xd >= crop_x && xd < crop_x2)
             {
-                localOn = (pixels[yd * pitch / 4 + xd] & 0xff000000) != 0;
+                localOn = (pixels[yd * pitch / 4 + xd] >> 24) >= 0x80;
             }
-
             if (pixOn != localOn)
-                dist = std::min((int)distXY, dist);
+            {
+                if ((int)distXY < dist)
+                {
+                    dist = (int)distXY;
+                }
+            }
         }
     }
 
@@ -226,4 +272,188 @@ void PixelBlock::Dump()
         SDL_Log(line);
     }
 }
+
+void PixelBlockDistanceFinder::Generate(const PixelBlock& source)
+{
+    fullPitch = (source.w+63) / 64;
+    quarterPitch = ((source.w / 4) + 63) / 64;
+    quarterHeight = (source.h + 3) / 4;
+
+    pixelMaskFullRez = new u64[fullPitch * source.h];
+    memset(pixelMaskFullRez, 0, fullPitch * source.h * 8);
+
+    pixelMaskQuarterRezOff = new u64[quarterPitch * quarterHeight];
+    memset(pixelMaskQuarterRezOff, 0, quarterPitch * quarterHeight * 8);
+
+    pixelMaskQuarterRezOn = new u64[quarterPitch * quarterHeight];
+    memset(pixelMaskQuarterRezOn, 0, quarterPitch * quarterHeight * 8);
+
+    w = source.w;
+    h = source.h;
+
+    for (int y = 0; y < source.h; y++)
+    {
+        for (int x = 0; x < source.w; x++)
+        {
+            u8 val = source.pixels[y * source.pitch / 4 + x] >> 24;
+
+            int idxQuarter = y / 4 * quarterPitch + x / 4 / 64;
+            int bitQuarter = (x / 4) & 63;
+            if (val >= 0x80)
+            {
+                pixelMaskFullRez[y * fullPitch + x / 64] |= (u64)1 << (x & 63);
+                pixelMaskQuarterRezOn[idxQuarter] |= (u64)1 << bitQuarter;
+            }
+            else
+            {
+                pixelMaskQuarterRezOff[idxQuarter] |= (u64)1 << bitQuarter;
+            }
+        }
+    }
+}
+
+int PixelBlockDistanceFinder::FindDistance(int cx, int cy, int range) const
+{
+    bool pixOn = false;
+    if (cx >= 0 && cx < w && cy >= 0 && cy < h)
+    {
+        int bit = cx & 63;
+        int x = cx / 64;
+        pixOn = pixelMaskFullRez[cy * fullPitch + x] & ((u64)1 << bit) ? true : false;
+    }
+
+    float fcx = (float)cx;
+    float fcy = (float)cy;
+
+    // search range
+    int sx1 = std::max(cx - range, 0);
+    int sx2 = std::min(cx + range, w - 1);
+    int sy1 = std::max(cy - range, 0);
+    int sy2 = std::min(cy + range, h - 1);
+
+    // low rez search range
+    int lx1 = sx1 / 4;
+    int lx2 = sx2 / 4;
+    int ly1 = sy1 / 4;
+    int ly2 = sy2 / 4;
+
+    // 32x32 => 8x8 => 64 search locations - the search 4x4 when you find it...
+    int maxDist = 128;
+    u64 *quarterRezMask = pixOn ? pixelMaskQuarterRezOff : pixelMaskQuarterRezOn;
+
+    // find closest pixel OFF
+    for (int yo = ly1; yo <= ly2; yo++)
+    {
+        for (int xo = lx1; xo <= lx2; xo++)
+        {
+            if (quarterRezMask[yo * quarterPitch + xo / 64] & ((u64)1 << (xo & 63)))
+            {
+                // check for a hirez pixel
+                for (int yy = 0; yy < 4; yy++)
+                {
+                    for (int xx = 0; xx < 4; xx++)
+                    {
+                        int check_x = xo * 4 + xx;
+                        int check_y = yo * 4 + yy;
+                        if (check_x == cx && check_y == cy)
+                            continue;
+
+                        int wx = check_x / 64;
+                        int bitx = check_x & 63;
+                        bool localOn = (pixelMaskFullRez[check_y * fullPitch + wx] & ((u64)1 << bitx)) ? true : false;
+                        if (pixOn != localOn)
+                        {
+                            int dx = check_x - cx;
+                            int dy = check_y - cy;
+                            float dist = sqrtf((float)(dx * dx + dy * dy));
+                            if (pixOn)
+                                dist -= 1.0f;
+
+                            float distXY = range ? dist / (float)range * 127.0f : 127.0f;
+                            int iDistXY = (int)distXY;
+                            if (iDistXY < maxDist)
+                            {
+                                maxDist = iDistXY;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return pixOn ? maxDist : -maxDist;
+}
+
+int PixelBlockDistanceFinder::FindDistance2(int cx, int cy, int range) const
+{
+    bool pixOn = false;
+    if (cx >= 0 && cx < w && cy >= 0 && cy < h)
+    {
+        int bit = cx & 63;
+        int x = cx / 64;
+        pixOn = pixelMaskFullRez[cy * fullPitch + x] & ((u64)1 << bit) ? true : false;
+    }
+
+    float fcx = (float)cx;
+    float fcy = (float)cy;
+
+    // find closest pixel OFF
+    for (auto &check : g_posChecks)
+    {
+        int xo = cx + check.xo;
+        int yo = cy + check.yo;
+        if (xo < 0 || xo >= w || yo < 0 || yo >= h)
+            continue;
+
+        int bit = xo & 63;
+        int x = xo / 64;
+        bool localOn = pixelMaskFullRez[yo * fullPitch + x] & ((u64)1 << bit) ? true : false;
+        if (pixOn != localOn)
+        {
+            return pixOn ? (int)(check.dist - 1.0f / 32.0f * 127.0f) : (int)-check.dist;
+        }
+    }
+
+    return pixOn ? 128 : -128;
+}
+
+void PixelBlockDistanceFinder::Dump() const
+{
+    char* line = new char[w+1];
+    line[w] = 0;
+
+    SDL_Log("HIREZ");
+    for (int y = 0; y < h; y++)
+    {
+        for (int x = 0; x < w; x++)
+        {
+            line[x] = pixelMaskFullRez[y * fullPitch + x / 64] & ((u64)1 << (x & 63)) ? 'X' : '.';
+        }
+        SDL_Log("%s", line);
+    }
+
+    SDL_Log("LOWREZ OFF");
+    memset(line, 0, w + 1);
+    for (int y = 0; y < h/4; y++)
+    {
+        for (int x = 0; x < w/4; x++)
+        {
+            line[x] = pixelMaskQuarterRezOff[y * quarterPitch + x/64] & ((u64)1 << (x & 63)) ? 'A' : '.';
+        }
+        SDL_Log("%s", line);
+    }
+
+    SDL_Log("LOWREZ ON");
+    memset(line, 0, w + 1);
+    for (int y = 0; y < h/4; y++)
+    {
+        for (int x = 0; x < w/4; x++)
+        {
+            int idx = y * quarterPitch + x / 64;
+            line[x] = pixelMaskQuarterRezOn[idx] & ((u64)1<<(x & 63)) ? 'A' : '.';
+        }
+        SDL_Log("%s", line);
+    }
+}
+
 
