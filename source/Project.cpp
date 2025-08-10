@@ -121,10 +121,30 @@ bool Project::Gui(SDL_Renderer* renderer)
         if (ImGui::SliderInt("Line Height", &m_lineHeight, 8, 70))
         {
         }
-        ImGui::SameLine(0, 100);
-        if (ImGui::Button("GenerateSDF"))
+
+
+        int char_total = 0;
+        int char_sdf = 0;
+
+        for (auto &ch : m_chars)
         {
-            GenerateSDF(renderer);
+            if (ch.selected && ch.surface)
+            {
+                char_total++;
+                if (ch.sourceState >= ch.GeneratedLargeSDF)
+                    char_sdf++;
+            }
+        }
+        ImGui::SameLine(0, 100);
+        ImGui::Text("SDF %d/%d", char_sdf, char_total);
+
+        if (char_sdf == char_total)
+        {
+            ImGui::SameLine(0, 100);
+            if (ImGui::Button("GenerateSDF"))
+            {
+                GenerateSDF(renderer);
+            }
         }
 
         if (ImGui::InputInt("Page Width", &m_pageWidth, 64))
@@ -137,6 +157,13 @@ bool Project::Gui(SDL_Renderer* renderer)
         ImGui::SameLine(0, 100);
         if (ImGui::InputInt("Padding", &m_padding, 32))
         {
+        }
+        ImGui::SameLine(0, 100);
+        if (ImGui::Checkbox("SDF", &m_applySDF))
+        {
+            AbortAsyncTasks();
+            for (auto& ch : m_chars)
+                GenerateCharItem(ch, renderer);
         }
 
         if (m_atlas.Pages().size() > 0)
@@ -623,7 +650,7 @@ void Project::GenerateFont(SDL_Renderer* renderer)
 
 void Project::GenerateCharItem(FontChar &item, SDL_Renderer* renderer)
 {
-    auto func = [renderer, &item, fontSize = m_fontSize]()
+    auto sdfFunc = [renderer, &item, fontSize = m_fontSize]()
     {
         // generate the SDF (512 size with 32 range SDF)
         // this only needs to be generated once by character
@@ -635,15 +662,17 @@ void Project::GenerateCharItem(FontChar &item, SDL_Renderer* renderer)
             item.pb_source.h = item.largeSurface->h;
             item.pb_source.pitch = item.largeSurface->pitch;
             item.pb_source.CalcCropRect();
+
             item.pbdf_source.Generate(item.pb_source);
             item.pb_SDF.w = item.pb_source.crop_w + SDFRange*2;
             item.pb_SDF.h = item.pb_source.crop_h + SDFRange*2;
             item.pb_SDF.pitch = item.pb_SDF.w * 4;
             item.pb_SDF.pixels = new u32[item.pb_SDF.w * item.pb_SDF.h];
-
             item.pb_SDF.GenerateSDF(item.pb_source, item.pbdf_source, SDFRange);
             item.pb_SDF.CalcCropRect();
+
             item.sourceState = FontChar::GeneratedLargeSDF;
+            item.sdf = true;
         }
 
         // generate scaled SDF if we haven't generated it for the current font size
@@ -663,6 +692,52 @@ void Project::GenerateCharItem(FontChar &item, SDL_Renderer* renderer)
             item.sourceState = FontChar::GeneratedScaledSDF;
         }
     };
+
+    auto scaleFunc = [renderer, &item, fontSize = m_fontSize]()
+        {
+            // generate the SDF (512 size with 32 range SDF)
+            // this only needs to be generated once by character
+            // if the font size changes, we just scale this to a different size
+            if (item.sourceState == FontChar::GeneratingLargeSDF)
+            {
+                item.pb_source.pixels = (u32*)item.largeSurface->pixels;
+                item.pb_source.w = item.largeSurface->w;
+                item.pb_source.h = item.largeSurface->h;
+                item.pb_source.pitch = item.largeSurface->pitch;
+                item.pb_source.CalcCropRect();
+                item.pb_source.Dump();
+
+                item.pb_SDF.w = item.pb_source.crop_w + SDFRange * 2;
+                item.pb_SDF.h = item.pb_source.crop_h + SDFRange * 2;
+                item.pb_SDF.pitch = item.pb_SDF.w * 4;
+                item.pb_SDF.pixels = new u32[item.pb_SDF.w * item.pb_SDF.h];
+
+                item.pb_SDF.BicubicScale(item.pb_source);
+                item.pb_SDF.CalcCropRect();
+                item.scaledSize = fontSize;
+                item.sourceState = FontChar::GeneratedLargeSDF;
+
+                item.sdf = false;
+            }
+
+            // generate scaled SDF if we haven't generated it for the current font size
+            SDL_assert(item.sourceState == FontChar::GeneratedLargeSDF || item.sourceState == FontChar::GeneratedScaledSDF);
+
+            if (item.sourceState != FontChar::GeneratingScaledSDF && (item.sourceState != FontChar::GeneratedScaledSDF || item.scaledSize != fontSize))
+            {
+                // scale the large SDF to fontsize
+                float scalar = (float)fontSize / 512.0f;
+                item.pb_scaledSDF.w = (int)(item.pb_SDF.w * scalar);
+                item.pb_scaledSDF.h = (int)(item.pb_SDF.h * scalar);
+                item.pb_scaledSDF.pixels = new u32[item.pb_scaledSDF.w * item.pb_scaledSDF.h];
+                item.pb_scaledSDF.pitch = item.pb_scaledSDF.w * 4;
+                item.pb_scaledSDF.BicubicScale(item.pb_SDF);
+                item.pb_scaledSDF.CalcCropRect();
+
+                item.scaledSize = fontSize;
+                item.sourceState = FontChar::GeneratedScaledSDF;
+            }
+        };
 
     if (item.sourceState == FontChar::Empty)
     {
@@ -685,9 +760,14 @@ void Project::GenerateCharItem(FontChar &item, SDL_Renderer* renderer)
     // crop the preview
     if (item.surface && item.selected)
     {
-        if (item.sourceState == FontChar::GeneratedSource)
+        if (item.sourceState == FontChar::GeneratedSource || item.sdf != m_applySDF || item.scaledSize != m_fontSize)
+        {
             item.sourceState = FontChar::GeneratingLargeSDF;
-        QueueAsyncTaskHP(func);
+            if (m_applySDF)
+                QueueAsyncTaskHP(sdfFunc);
+            else
+                QueueAsyncTaskHP(scaleFunc);
+        }
     }
 }
 

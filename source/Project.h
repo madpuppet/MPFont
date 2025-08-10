@@ -54,6 +54,7 @@ private:
     int m_sdf_zoom = 500;
 
     bool m_foldChars = false;
+    bool m_applySDF = false;
 
     int m_fontSize = 16;
     int m_pageWidth = 512;

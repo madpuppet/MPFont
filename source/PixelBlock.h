@@ -10,24 +10,17 @@ struct PixelBlockDistanceFinder
     ~PixelBlockDistanceFinder()
     {
         delete[] pixelMaskFullRez;
-        delete[] pixelMaskQuarterRezOn;
-        delete[] pixelMaskQuarterRezOff;
     }
 
     // high rez and low rez pixel mask - 1 bit per pixel on/off
     u64* pixelMaskFullRez = nullptr;
-    u64* pixelMaskQuarterRezOff = nullptr;
-    u64* pixelMaskQuarterRezOn = nullptr;
 
     int w = 0;
     int h = 0;
     int fullPitch = 0;
-    int quarterPitch = 0;
-    int quarterHeight = 0;
 
     void Generate(const PixelBlock& source);
     int FindDistance(int cx, int cy, int range) const;
-    int FindDistance2(int cx, int cy, int range) const;
     void Dump() const;
 };
 
@@ -44,7 +37,6 @@ struct PixelBlock
 
     void CalcCropRect();
     void GenerateSDF(const PixelBlock& source, const PixelBlockDistanceFinder& sourceDF, int range);
-    int FindDistance(int cx, int cy, int range) const;
     void BicubicScale(const PixelBlock& source);
     void Dump();
 };

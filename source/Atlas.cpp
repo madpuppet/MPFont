@@ -128,8 +128,8 @@ bool Atlas::TryAddBlock(FontChar *item)
 	u32* dest_pixels = (u32*)dest_surface->pixels;
 	dest_pixels += highest * dest_pitch;
 
-	int src_pitch = w;
-	u32* src_pixels = item->pb_scaledSDF.pixels;
+	int src_pitch = item->pb_scaledSDF.pitch/4;
+	u32* src_pixels = &item->pb_scaledSDF.pixels[item->pb_scaledSDF.crop_y * src_pitch];
 
 	float scalar = item->scaledSize / 512.0f;
 	item->x = m_addPageX;

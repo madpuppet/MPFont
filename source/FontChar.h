@@ -39,6 +39,7 @@ struct FontChar
     PixelBlock pb_SDF;                           // SDF + 32 pixel border...
     PixelBlock pb_scaledSDF;                     // bicubic sampled down to 'fontsize'
     PixelBlockDistanceFinder pbdf_source;        // accelerate FindDistance for source;
+    bool sdf = false;                            // pb_sdf uses SDF
 
     // final render data
     int scaledSize = 0;
