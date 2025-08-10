@@ -20,7 +20,7 @@ struct PixelBlockDistanceFinder
     int fullPitch = 0;
 
     void Generate(const PixelBlock& source);
-    int FindDistance(int cx, int cy, int range) const;
+    int FindDistance(int cx, int cy, int range, int& distX, int& distY) const;
     void Dump() const;
 };
 
@@ -37,7 +37,8 @@ struct PixelBlock
 
     void CalcCropRect();
     void GenerateSDF(const PixelBlock& source, const PixelBlockDistanceFinder& sourceDF, int range);
-    void BicubicScale(const PixelBlock& source);
+    void CopyCropped(const PixelBlock& source, int x, int y);
+    void ScaleCropped(const PixelBlock& source);
     void Dump();
 };
 

@@ -15,6 +15,17 @@
 #include <string>
 #include <format>
 
+#include <cmath>
+#include <cstdint>
+#include <vector>
+#include <algorithm>
+
+
+#include <cmath>
+#include <cstdint>
+#include <vector>
+#include <algorithm>
+
 struct PosCheck
 {
     int xo, yo;
@@ -34,95 +45,72 @@ void InitPosCheckArray()
 
             float dist = (int)sqrtf((float)(xo * xo + yo * yo)) / 32.0f * 127.0f;
             if (dist < 128.0f)
+            {
                 g_posChecks.emplace_back(xo, yo, dist);
+            }
         }
     }
 
     std::sort(g_posChecks.begin(), g_posChecks.end(), [](const PosCheck& a, const PosCheck& b)->bool { return a.dist < b.dist; });
 }
 
-
-// Mitchell-Netravali cubic filter
-float cubicFilter(float x) {
-    const float B = 1.0f / 3.0f;
-    const float C = 1.0f / 3.0f;
-    x = std::abs(x);
-
-    if (x < 1.0f) {
-        return ((12 - 9 * B - 6 * C) * x * x * x +
-            (-18 + 12 * B + 6 * C) * x * x +
-            (6 - 2 * B)) / 6.0f;
-    }
-    else if (x < 2.0f) {
-        return ((-B - 6 * C) * x * x * x +
-            (6 * B + 30 * C) * x * x +
-            (-12 * B - 48 * C) * x +
-            (8 * B + 24 * C)) / 6.0f;
-    }
-    else {
-        return 0.0f;
-    }
-}
-
-// Clamp float to byte
-inline uint8_t clampByte(float x) {
-    return static_cast<uint8_t>(std::clamp(x, 0.0f, 255.0f));
-}
-
-// Get channel from ARGB
-inline uint8_t getChannel(uint32_t pixel, int channel) {
-    return (pixel >> (24 - channel * 8)) & 0xFF; // 0=A, 1=R, 2=G, 3=B
-}
-
-void PixelBlock::BicubicScale(const PixelBlock &source)
+void PixelBlock::ScaleCropped(const PixelBlock& source)
 {
-    int sourcePitch = source.pitch / 4;
-    int destPitch = pitch / 4;
+    if (source.crop_w == 0 || source.crop_h == 0)
+        return;
 
-    float scaleX = static_cast<float>(source.w) / static_cast<float>(w);
-    float scaleY = static_cast<float>(source.h) / static_cast<float>(h);
-
-    for (int dy = 0; dy < h; ++dy) {
-        for (int dx = 0; dx < w; ++dx) {
-            float srcX = (dx + 0.5f) * scaleX - 0.5f;
-            float srcY = (dy + 0.5f) * scaleY - 0.5f;
-
-            int xInt = static_cast<int>(std::floor(srcX));
-            int yInt = static_cast<int>(std::floor(srcY));
-            float dxF = srcX - xInt;
-            float dyF = srcY - yInt;
-
-            float weightsX[4], weightsY[4];
-            for (int i = 0; i < 4; ++i) {
-                weightsX[i] = cubicFilter(i - 1 - dxF);
-                weightsY[i] = cubicFilter(i - 1 - dyF);
-            }
-
-            float sum[4] = {}; // A, R, G, B
-
-            for (int m = 0; m < 4; ++m) {
-                int sy = std::clamp(yInt + m - 1, 0, source.h - 1);
-                for (int n = 0; n < 4; ++n) {
-                    int sx = std::clamp(xInt + n - 1, 0, source.w - 1);
-                    uint32_t pixel = source.pixels[sy * sourcePitch + sx];
-
-                    float w = weightsX[n] * weightsY[m];
-                    for (int c = 0; c < 4; ++c) {
-                        sum[c] += getChannel(pixel, c) * w;
-                    }
+    // scale source crop_x..crop_x+crop_w, crop_y..crop_y+crop_w  =>  w,h
+    for (int y = 0; y < h; y++)
+    {
+        for (int x = 0; x < w; x++)
+        {
+            int x1 = x * source.crop_w / w + source.crop_x;
+            int x2 = (x + 1) * source.crop_w / w + source.crop_x;
+            int y1 = y * source.crop_h / h + source.crop_y;
+            int y2 = (y + 1) * source.crop_h / h + source.crop_y;
+            u32 accumA = 0;
+            u32 accumR = 0;
+            u32 accumG = 0;
+            u32 accumB = 0;
+            for (int yy = y1; yy < y2; yy++)
+            {
+                for (int xx = x1; xx < x2; xx++)
+                {
+                    u32 val = source.pixels[yy * source.pitch / 4 + xx];
+                    accumA += val >> 24;
+                    accumR += (val >> 16) & 0xff;
+                    accumG += (val >> 8) & 0xff;
+                    accumB += val & 0xff;
                 }
             }
-
-            uint32_t A = clampByte(sum[0]);
-            uint32_t R = clampByte(sum[1]);
-            uint32_t G = clampByte(sum[2]);
-            uint32_t B = clampByte(sum[3]);
-
-            pixels[dy * destPitch + dx] = (A << 24) | (R << 16) | (G << 8) | B;
+            int area = (x2 - x1) * (y2 - y1);
+            accumA /= area;
+            accumR /= area;
+            accumG /= area;
+            accumB /= area;
+            pixels[y * pitch / 4 + x] = (accumA << 24) | (accumR << 16) | (accumG << 8) | (accumB);
         }
     }
 }
 
+void PixelBlock::CopyCropped(const PixelBlock& source, int x, int y)
+{
+    for (int yy = 0; yy < source.crop_h; yy++)
+    {
+        int sy = source.crop_y + yy;
+        int dy = y + yy;
+        if (dy < 0 || dy >= h)
+            continue;
+        for (int xx = 0; xx < source.crop_w; xx++)
+        {
+            int sx = source.crop_x + xx;
+            int dx = x + xx;
+            if (dx < 0 || dx >= w)
+                continue;
+            pixels[dy * pitch / 4 + dx] = source.pixels[sy * source.pitch / 4 + sx];
+        }
+    }
+}
 
 void PixelBlock::CalcCropRect()
 {
@@ -173,20 +161,23 @@ void PixelBlock::GenerateSDF(const PixelBlock& source, const PixelBlockDistanceF
         for (int xx = 0; xx < w; xx++)
         {
             int xsrc = source.crop_x - range + xx;
-            int dist = sourceDF.FindDistance(xsrc, ysrc, range);
+            int distX, distY;
+            int dist = sourceDF.FindDistance(xsrc, ysrc, range, distX, distY);
+            u32 nx = xx * 255 / (w - 1);
+            u32 ny = yy * 255 / (h - 1);
             if (dist > -128 && dist < 128)
             {
                 u32 nd = dist + 128;
-                u32 out = nd << 24 | 0xffffff;
+                u32 out = nd << 24 | nx << 16 | ny << 8 | 0xff;
                 pixels[yy * pitch / 4 + xx] = out;
             }
             else if (dist <= -127)
             {
-                pixels[yy * pitch / 4 + xx] = 0x00ffffff;
+                pixels[yy * pitch / 4 + xx] = nx << 16 | ny << 8 | 0xff;
             }
             else
             {
-                pixels[yy * pitch / 4 + xx] = 0xffffffff;
+                pixels[yy * pitch / 4 + xx] = 0xff000000 | nx << 16 | ny << 8 | 0xff;
             }
         }
     }
@@ -201,12 +192,9 @@ void PixelBlock::Dump()
         for (int x = 0; x < w; x++)
         {
             u8 val = (pixels[y * (pitch / 4) + x] & 0xff000000) >> 24;
-            if (x >= crop_x && x < crop_x+crop_w && y >= crop_y && y < crop_y+crop_h)
-                line[x] = val ? 'a'+(val/16) : '.';
-            else
-                line[x] = val ? 'A'+(val/16) : '*';
+            line[x] = val>0x80 ? 'A' : '.';
         }
-        SDL_Log(line);
+        SDL_Log("%03d:%s",y,line);
     }
 }
 
@@ -233,7 +221,7 @@ void PixelBlockDistanceFinder::Generate(const PixelBlock& source)
     }
 }
 
-int PixelBlockDistanceFinder::FindDistance(int cx, int cy, int range) const
+int PixelBlockDistanceFinder::FindDistance(int cx, int cy, int range, int &distX, int &distY) const
 {
     bool pixOn = false;
     if (cx >= 0 && cx < w && cy >= 0 && cy < h)
@@ -259,6 +247,8 @@ int PixelBlockDistanceFinder::FindDistance(int cx, int cy, int range) const
         bool localOn = pixelMaskFullRez[yo * fullPitch + x] & ((u64)1 << bit) ? true : false;
         if (pixOn != localOn)
         {
+            distX = check.xo * 127 / 32;
+            distY = check.yo * 127 / 32;
             return pixOn ? (int)(check.dist - 1.0f / 32.0f * 127.0f) : (int)-check.dist;
         }
     }

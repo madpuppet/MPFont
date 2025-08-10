@@ -122,13 +122,11 @@ bool Project::Gui(SDL_Renderer* renderer)
         {
         }
 
-
         int char_total = 0;
         int char_sdf = 0;
-
         for (auto &ch : m_chars)
         {
-            if (ch.selected && ch.surface)
+            if (ch.selected && ch.surface && ch.pb_source.crop_w > 0 && ch.pb_source.crop_h > 0)
             {
                 char_total++;
                 if (ch.sourceState >= ch.GeneratedLargeSDF)
@@ -657,12 +655,6 @@ void Project::GenerateCharItem(FontChar &item, SDL_Renderer* renderer)
         // if the font size changes, we just scale this to a different size
         if (item.sourceState == FontChar::GeneratingLargeSDF)
         {
-            item.pb_source.pixels = (u32*)item.largeSurface->pixels;
-            item.pb_source.w = item.largeSurface->w;
-            item.pb_source.h = item.largeSurface->h;
-            item.pb_source.pitch = item.largeSurface->pitch;
-            item.pb_source.CalcCropRect();
-
             item.pbdf_source.Generate(item.pb_source);
             item.pb_SDF.w = item.pb_source.crop_w + SDFRange*2;
             item.pb_SDF.h = item.pb_source.crop_h + SDFRange*2;
@@ -670,7 +662,6 @@ void Project::GenerateCharItem(FontChar &item, SDL_Renderer* renderer)
             item.pb_SDF.pixels = new u32[item.pb_SDF.w * item.pb_SDF.h];
             item.pb_SDF.GenerateSDF(item.pb_source, item.pbdf_source, SDFRange);
             item.pb_SDF.CalcCropRect();
-
             item.sourceState = FontChar::GeneratedLargeSDF;
             item.sdf = true;
         }
@@ -682,11 +673,11 @@ void Project::GenerateCharItem(FontChar &item, SDL_Renderer* renderer)
         {
             // scale the large SDF to fontsize
             float scalar = (float)fontSize / 512.0f;
-            item.pb_scaledSDF.w = (int)(item.pb_SDF.w * scalar);
-            item.pb_scaledSDF.h = (int)(item.pb_SDF.h * scalar);
+            item.pb_scaledSDF.w = (int)(item.pb_SDF.crop_w * scalar);
+            item.pb_scaledSDF.h = (int)(item.pb_SDF.crop_h * scalar);
             item.pb_scaledSDF.pixels = new u32[item.pb_scaledSDF.w * item.pb_scaledSDF.h];
             item.pb_scaledSDF.pitch = item.pb_scaledSDF.w * 4;
-            item.pb_scaledSDF.BicubicScale(item.pb_SDF);
+            item.pb_scaledSDF.ScaleCropped(item.pb_SDF);
             item.pb_scaledSDF.CalcCropRect();
             item.scaledSize = fontSize;
             item.sourceState = FontChar::GeneratedScaledSDF;
@@ -700,23 +691,14 @@ void Project::GenerateCharItem(FontChar &item, SDL_Renderer* renderer)
             // if the font size changes, we just scale this to a different size
             if (item.sourceState == FontChar::GeneratingLargeSDF)
             {
-                item.pb_source.pixels = (u32*)item.largeSurface->pixels;
-                item.pb_source.w = item.largeSurface->w;
-                item.pb_source.h = item.largeSurface->h;
-                item.pb_source.pitch = item.largeSurface->pitch;
-                item.pb_source.CalcCropRect();
-                item.pb_source.Dump();
-
                 item.pb_SDF.w = item.pb_source.crop_w + SDFRange * 2;
                 item.pb_SDF.h = item.pb_source.crop_h + SDFRange * 2;
                 item.pb_SDF.pitch = item.pb_SDF.w * 4;
                 item.pb_SDF.pixels = new u32[item.pb_SDF.w * item.pb_SDF.h];
-
-                item.pb_SDF.BicubicScale(item.pb_source);
+                memset(item.pb_SDF.pixels, 0, item.pb_SDF.w * item.pb_SDF.h * 4);
+                item.pb_SDF.CopyCropped(item.pb_source, SDFRange, SDFRange);
                 item.pb_SDF.CalcCropRect();
-                item.scaledSize = fontSize;
                 item.sourceState = FontChar::GeneratedLargeSDF;
-
                 item.sdf = false;
             }
 
@@ -727,13 +709,12 @@ void Project::GenerateCharItem(FontChar &item, SDL_Renderer* renderer)
             {
                 // scale the large SDF to fontsize
                 float scalar = (float)fontSize / 512.0f;
-                item.pb_scaledSDF.w = (int)(item.pb_SDF.w * scalar);
-                item.pb_scaledSDF.h = (int)(item.pb_SDF.h * scalar);
+                item.pb_scaledSDF.w = (int)(item.pb_SDF.crop_w * scalar);
+                item.pb_scaledSDF.h = (int)(item.pb_SDF.crop_h * scalar);
                 item.pb_scaledSDF.pixels = new u32[item.pb_scaledSDF.w * item.pb_scaledSDF.h];
                 item.pb_scaledSDF.pitch = item.pb_scaledSDF.w * 4;
-                item.pb_scaledSDF.BicubicScale(item.pb_SDF);
+                item.pb_scaledSDF.ScaleCropped(item.pb_SDF);
                 item.pb_scaledSDF.CalcCropRect();
-
                 item.scaledSize = fontSize;
                 item.sourceState = FontChar::GeneratedScaledSDF;
             }
@@ -751,18 +732,28 @@ void Project::GenerateCharItem(FontChar &item, SDL_Renderer* renderer)
             SDL_LockSurface(item.surface);
             SDL_LockSurface(item.largeSurface);
             TTF_GlyphMetrics(m_ttf_font_large, item.ch, &item.large_minx, &item.large_maxx, &item.large_miny, &item.large_maxy, &item.large_advance);
+            item.pb_source.pixels = (u32*)item.largeSurface->pixels;
+            item.pb_source.w = item.largeSurface->w;
+            item.pb_source.h = item.largeSurface->h;
+            item.pb_source.pitch = item.largeSurface->pitch;
+            item.pb_source.CalcCropRect();
         }
 
         // we'll be generating the large SDF next on thread
         item.sourceState = FontChar::GeneratedSource;
     }
 
-    // crop the preview
-    if (item.surface && item.selected)
+    if (item.pb_source.crop_w == 0 || item.pb_source.crop_h == 0)
+    {
+        // need this set so spaces will work on export
+        item.scaledSize = m_fontSize;
+    }
+    else if (item.surface && item.selected)
     {
         if (item.sourceState == FontChar::GeneratedSource || item.sdf != m_applySDF || item.scaledSize != m_fontSize)
         {
-            item.sourceState = FontChar::GeneratingLargeSDF;
+            if (item.sourceState == FontChar::GeneratedSource || item.sdf != m_applySDF)
+                item.sourceState = FontChar::GeneratingLargeSDF;
             if (m_applySDF)
                 QueueAsyncTaskHP(sdfFunc);
             else

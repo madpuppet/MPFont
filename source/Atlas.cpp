@@ -88,11 +88,15 @@ bool Atlas::TryAddBlock(FontChar *item)
 
 	int w = item->pb_scaledSDF.crop_w;
 	int h = item->pb_scaledSDF.crop_h;
+	float scalar = (float)item->scaledSize / 512.0f;
+	item->advance = (int)(item->large_advance * scalar);
 
 	if (w == 0 || h == 0 || w > m_width || h > m_height)
 	{
 		item->x = 0;
 		item->y = 0;
+		item->w = 0;
+		item->h = 0;
 		item->page = 0;
 		return true;
 	}
@@ -106,7 +110,7 @@ bool Atlas::TryAddBlock(FontChar *item)
 
 	// find highest column
 	int highest = 0;
-	for (int i = 0; i < w; i++)
+	for (int i = 0; i < w+m_padding && (i + m_addPageX) < m_width; i++)
 	{
 		highest = std::max(highest, m_columnHeights[m_addPageX + i]);
 	}
@@ -131,14 +135,12 @@ bool Atlas::TryAddBlock(FontChar *item)
 	int src_pitch = item->pb_scaledSDF.pitch/4;
 	u32* src_pixels = &item->pb_scaledSDF.pixels[item->pb_scaledSDF.crop_y * src_pitch];
 
-	float scalar = item->scaledSize / 512.0f;
 	item->x = m_addPageX;
 	item->y = highest;
 	item->w = w;
 	item->h = h;
 	item->xoffset = (int)((item->pb_source.crop_x - SDFRange) * scalar);
 	item->yoffset = (int)((item->pb_source.h - item->pb_source.crop_y - item->pb_source.crop_h + SDFRange) * scalar);
-	item->advance = (int)(item->large_advance * scalar);
 		
 	for (int yy = 0; yy < h; yy++)
 	{
