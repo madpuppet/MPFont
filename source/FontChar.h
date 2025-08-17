@@ -11,17 +11,8 @@ struct FontChar
 {
     u16 ch = 0;
     bool selected = false;
-
-    enum SourceState
-    {
-        Empty,
-        GeneratedSource,
-        GeneratingLargeSDF,
-        GeneratedLargeSDF,
-        GeneratingScaledSDF,
-        GeneratedScaledSDF
-    };
-    SourceState sourceState = Empty;
+    bool preview = false;
+    bool generated = false;
 
     SDL_Texture* texture = nullptr;             // preview texture  (32)
     SDL_Surface* surface = nullptr;             // small surface  (32)
@@ -33,13 +24,8 @@ struct FontChar
     int large_maxy = 0;
     int large_advance = 0;
 
-    // SDF calculations...
-    SDL_Surface* largeSurface = nullptr;         // large source surface (512)
-    PixelBlock pb_source;                        // generate SDF size (512)
-    PixelBlock pb_SDF;                           // SDF + 32 pixel border...
-    PixelBlock pb_scaledSDF;                     // bicubic sampled down to 'fontsize'
-    PixelBlockDistanceFinder pbdf_source;        // accelerate FindDistance for source;
-    bool sdf = false;                            // pb_sdf uses SDF
+    // Final SDF block needed by Atlas
+    PixelBlock pb_scaledSDF;
 
     // final render data
     int scaledSize = 0;

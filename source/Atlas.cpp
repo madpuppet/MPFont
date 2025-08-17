@@ -86,17 +86,13 @@ bool Atlas::TryAddBlock(FontChar *item)
 	if (m_pages.empty())
 		return false;
 
-	int w = item->pb_scaledSDF.crop_w;
-	int h = item->pb_scaledSDF.crop_h;
 	float scalar = (float)item->scaledSize / 512.0f;
 	item->advance = (int)(item->large_advance * scalar);
 
-	if (w == 0 || h == 0 || w > m_width || h > m_height)
+	if (item->w == 0 || item->h == 0 || item->w > m_width || item->h > m_height)
 	{
 		item->x = 0;
 		item->y = 0;
-		item->w = 0;
-		item->h = 0;
 		item->page = 0;
 		return true;
 	}
@@ -105,23 +101,23 @@ bool Atlas::TryAddBlock(FontChar *item)
 
 	// any space for a block...?
 	// does it fit horizontally?
-	if ((m_addPageX + w) > m_width)
+	if ((m_addPageX + item->w) > m_width)
 		m_addPageX = 0;
 
 	// find highest column
 	int highest = 0;
-	for (int i = 0; i < w+m_padding && (i + m_addPageX) < m_width; i++)
+	for (int i = 0; i < item->w+m_padding && (i + m_addPageX) < m_width; i++)
 	{
 		highest = std::max(highest, m_columnHeights[m_addPageX + i]);
 	}
 
 	// does block fit vertically?
-	int finalHeight = highest + h;
+	int finalHeight = highest + item->h;
 	if (finalHeight > m_height)
 		return false;
 
 	// mark the columns as used
-	for (int i = 0; i < w; i++)
+	for (int i = 0; i < item->w; i++)
 	{
 		m_columnHeights[m_addPageX + i] = finalHeight+m_padding;
 	}
@@ -137,16 +133,12 @@ bool Atlas::TryAddBlock(FontChar *item)
 
 	item->x = m_addPageX;
 	item->y = highest;
-	item->w = w;
-	item->h = h;
-	item->xoffset = (int)((item->pb_source.crop_x - SDFRange) * scalar);
-	item->yoffset = (int)((item->pb_source.h - item->pb_source.crop_y - item->pb_source.crop_h + SDFRange) * scalar);
 		
-	for (int yy = 0; yy < h; yy++)
+	for (int yy = 0; yy < item->h; yy++)
 	{
 		u32* dest = &dest_pixels[m_addPageX];
 		u32* src = &src_pixels[item->pb_scaledSDF.crop_x];
-		for (int xx = 0; xx < w; xx++)
+		for (int xx = 0; xx < item->w; xx++)
 		{
 			*dest++ = *src++;
 		}
@@ -154,7 +146,7 @@ bool Atlas::TryAddBlock(FontChar *item)
 		src_pixels += src_pitch;
 	}
 
-	m_addPageX += w + m_padding;
+	m_addPageX += item->w + m_padding;
 
 	SDL_assert(m_addPageX >= 0);
 

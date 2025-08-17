@@ -20,6 +20,7 @@ public:
     void SaveAs();
     bool Gui(SDL_Renderer* renderer);
     void GenerateSDF(SDL_Renderer* renderer);
+    void GenerateCharSDF(FontChar& item);
     bool CloseRequested() { return !m_open; }
     void Export();
     void SetRenderer(SDL_Renderer* renderer);
@@ -59,6 +60,8 @@ private:
     int m_fontSize = 16;
     int m_pageWidth = 512;
     int m_pageHeight = 512;
-    int m_lineHeight = 16;
+    int m_linePadding = 2;
     int m_padding = 2;
+
+    std::mutex m_ttf_access;
 };

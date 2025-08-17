@@ -37,8 +37,8 @@ void Project::LoadFromShad(const Shad& shad)
                 m_isCharsFolded = c->GetBool();
             else if (c->field == "fontSize")
                 m_fontSize = c->GetI32();
-            else if (c->field == "lineHeight")
-                m_lineHeight = c->GetI32();
+            else if (c->field == "linePadding")
+                m_linePadding = c->GetI32();
             else if (c->field == "pagewidth")
                 m_pageWidth = c->GetI32();
             else if (c->field == "pageheight")
@@ -118,31 +118,23 @@ bool Project::Gui(SDL_Renderer* renderer)
         {
         }
         ImGui::SameLine(0, 100);
-        if (ImGui::SliderInt("Line Height", &m_lineHeight, 8, 70))
+        if (ImGui::SliderInt("Line Padding", &m_linePadding, 0, 32))
         {
         }
 
-        int char_total = 0;
-        int char_sdf = 0;
+        int selected_total = 0;
         for (auto &ch : m_chars)
         {
-            if (ch.selected && ch.surface && ch.pb_source.crop_w > 0 && ch.pb_source.crop_h > 0)
-            {
-                char_total++;
-                if (ch.sourceState >= ch.GeneratedLargeSDF)
-                    char_sdf++;
-            }
+            if (ch.selected)
+                selected_total++;
         }
         ImGui::SameLine(0, 100);
-        ImGui::Text("SDF %d/%d", char_sdf, char_total);
+        ImGui::Text("Selected %d/%d", selected_total, m_chars.size());
 
-        if (char_sdf == char_total)
+        ImGui::SameLine(0, 100);
+        if (ImGui::Button("GenerateSDF"))
         {
-            ImGui::SameLine(0, 100);
-            if (ImGui::Button("GenerateSDF"))
-            {
-                GenerateSDF(renderer);
-            }
+            GenerateSDF(renderer);
         }
 
         if (ImGui::InputInt("Page Width", &m_pageWidth, 64))
@@ -288,15 +280,12 @@ bool Project::Gui(SDL_Renderer* renderer)
                     centre.x = (areaMin.x + areaMax.x) / 2;
                     centre.y = (areaMin.y + areaMax.y) / 2 + 4;
 
-                    if (item.sourceState == FontChar::Empty)
+                    if (!item.preview)
                     {
                         GenerateCharItem(item, renderer);
                     }
                     else if (item.texture)
                     {
-                        if (item.selected && item.sourceState == FontChar::GeneratedSource)
-                            GenerateCharItem(item, renderer);
-
                         float aspectRatio = (float)item.surface->w / (float)item.surface->h;
                         int useWidth, useHeight;
                         if (aspectRatio > 1.0f)
@@ -318,31 +307,22 @@ bool Project::Gui(SDL_Renderer* renderer)
                         imgMax.y = imgMin.y + useHeight;
                         draw_list->AddImage(item.texture, imgMin, imgMax, ImVec2(0, 0), ImVec2(1, 1), colFG32);
                     }
-
-                    ImVec4 rectCol(1.0f, 0.0f, 0.0f, 1.0f);
-                    if (item.sourceState == FontChar::GeneratedScaledSDF)
+                }
+                if (pages > 1)
+                {
+                    ImGui::Text("Page %d/%d", m_page+1, pages);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Prev Chars"))
                     {
-                        rectCol = ImVec4(0.0f, 1.0f, 0.0f, 1.0f);
+                        m_page = std::max(0, m_page - 1);
                     }
-
-                    ImVec2 statusMin;
-                    statusMin.x = posMax.x - 8.0f;
-                    statusMin.y = posMax.y - 8.0f;
-                    ImVec2 statusMax;
-                    statusMax.x = posMax.x - 2.0f;
-                    statusMax.y = posMax.y - 2.0f;
-                    draw_list->AddRectFilled(statusMin, statusMax, statusColors[(int)item.sourceState]);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Next Chars"))
+                    {
+                        m_page = std::min(pages - 1, m_page + 1);
+                    }
+                    ImGui::SameLine();
                 }
-                if (ImGui::Button("Prev Chars"))
-                {
-                    m_page = std::max(0, m_page - 1);
-                }
-                ImGui::SameLine();
-                if (ImGui::Button("Next Chars"))
-                {
-                    m_page = std::min(pages - 1, m_page + 1);
-                }
-                ImGui::SameLine();
                 if (ImGui::Button("Clear All"))
                 {
                     for (auto& item : m_chars)
@@ -370,8 +350,8 @@ bool Project::Gui(SDL_Renderer* renderer)
                 auto it = std::find_if(m_chars.begin(), m_chars.end(), [ch](FontChar &fc)->bool {return fc.ch == (u16)ch; });
                 if (it != m_chars.end())
                 {
-                    float scale = 16.0f / 96.0f;
-                    if (it->sourceState == FontChar::Empty)
+                    float scale = 1.0f;
+                    if (!it->preview)
                     {
                         GenerateCharItem(*it, renderer);
                     }
@@ -379,7 +359,7 @@ bool Project::Gui(SDL_Renderer* renderer)
                     {
                         ImDrawList* draw_list = ImGui::GetWindowDrawList();
                         ImVec2 imgMin(sample_min.x, sample_min.y);
-                        ImVec2 imgMax(sample_min.x + it->largeSurface->w * scale, sample_min.y + it->largeSurface->h * scale);
+                        ImVec2 imgMax(sample_min.x + it->surface->w * scale, sample_min.y + it->surface->h * scale);
                         draw_list->AddImage(it->texture, imgMin, imgMax, ImVec2(0, 0), ImVec2(1, 1), 0xffffffff);
                     }
                     sample_min.x += it->large_advance * scale;
@@ -497,7 +477,7 @@ void Project::Export()
             root->AddChild("pageWidth", std::format("{}", m_pageWidth));
             root->AddChild("pageHeight", std::format("{}", m_pageHeight));
             root->AddChild("fontSize", std::format("{}", m_fontSize));
-            root->AddChild("lineHeight", std::format("{}", m_lineHeight));
+            root->AddChild("lineHeight", std::format("{}", m_fontSize + m_linePadding));
             auto charsNode = root->AddChild("chars", std::format("{}", m_chars.size()));
             for (auto &item : m_chars)
             {
@@ -547,6 +527,39 @@ void Project::Export()
                 out_file.write((const char *)png_buffer.data(), png_buffer.size());
                 out_file.close();
             }
+
+            std::filesystem::path material_filepath = filename;
+            std::string material_export_path = (material_filepath.parent_path() / material_filepath.stem()).string() + std::format("_page{}.material", p);
+            std::ofstream material_file(material_export_path, std::ios::out);
+            if (material_file.is_open())
+            {
+                material_file << "renderpass: ui, _systemui\n";
+
+                if (m_applySDF)
+                {
+                    material_file << "\tshader : sdf_ortho\n";
+                }
+                else
+                {
+                    material_file << "\tshader : standard_ortho\n";
+                }
+
+                material_file << "\tblend : blend\n";
+                material_file << "\tcull : none\n";
+                material_file << "\tzread : false\n";
+                material_file << "\tzwrite : false\n";
+                material_file << "\tsampler : Albedo\n";
+
+                std::string image_path = export_filepath.stem().string() + std::format("_page{}", p);
+                material_file << "\t\timage : " << image_path << "\n";
+
+                material_file << "\t\twrap : clamp\n";
+                material_file << "\t\tfilter : linear\n";
+                material_file << "\tstatic_ubo : UBO_Material\n";
+                material_file << "\t\tblendColor : 1, 1, 1, 1\n";
+                material_file.close();
+            }
+
         }
     }
 }
@@ -648,117 +661,183 @@ void Project::GenerateFont(SDL_Renderer* renderer)
 
 void Project::GenerateCharItem(FontChar &item, SDL_Renderer* renderer)
 {
-    auto sdfFunc = [renderer, &item, fontSize = m_fontSize]()
-    {
-        // generate the SDF (512 size with 32 range SDF)
-        // this only needs to be generated once by character
-        // if the font size changes, we just scale this to a different size
-        if (item.sourceState == FontChar::GeneratingLargeSDF)
-        {
-            item.pbdf_source.Generate(item.pb_source);
-            item.pb_SDF.w = item.pb_source.crop_w + SDFRange*2;
-            item.pb_SDF.h = item.pb_source.crop_h + SDFRange*2;
-            item.pb_SDF.pitch = item.pb_SDF.w * 4;
-            item.pb_SDF.pixels = new u32[item.pb_SDF.w * item.pb_SDF.h];
-            item.pb_SDF.GenerateSDF(item.pb_source, item.pbdf_source, SDFRange);
-            item.pb_SDF.CalcCropRect();
-            item.sourceState = FontChar::GeneratedLargeSDF;
-            item.sdf = true;
-        }
-
-        // generate scaled SDF if we haven't generated it for the current font size
-        SDL_assert(item.sourceState == FontChar::GeneratedLargeSDF || item.sourceState == FontChar::GeneratedScaledSDF);
-
-        if (item.sourceState != FontChar::GeneratingScaledSDF && (item.sourceState != FontChar::GeneratedScaledSDF || item.scaledSize != fontSize))
-        {
-            // scale the large SDF to fontsize
-            float scalar = (float)fontSize / 512.0f;
-            item.pb_scaledSDF.w = (int)(item.pb_SDF.crop_w * scalar);
-            item.pb_scaledSDF.h = (int)(item.pb_SDF.crop_h * scalar);
-            item.pb_scaledSDF.pixels = new u32[item.pb_scaledSDF.w * item.pb_scaledSDF.h];
-            item.pb_scaledSDF.pitch = item.pb_scaledSDF.w * 4;
-            item.pb_scaledSDF.ScaleCropped(item.pb_SDF);
-            item.pb_scaledSDF.CalcCropRect();
-            item.scaledSize = fontSize;
-            item.sourceState = FontChar::GeneratedScaledSDF;
-        }
-    };
-
-    auto scaleFunc = [renderer, &item, fontSize = m_fontSize]()
-        {
-            // generate the SDF (512 size with 32 range SDF)
-            // this only needs to be generated once by character
-            // if the font size changes, we just scale this to a different size
-            if (item.sourceState == FontChar::GeneratingLargeSDF)
-            {
-                item.pb_SDF.w = item.pb_source.crop_w + SDFRange * 2;
-                item.pb_SDF.h = item.pb_source.crop_h + SDFRange * 2;
-                item.pb_SDF.pitch = item.pb_SDF.w * 4;
-                item.pb_SDF.pixels = new u32[item.pb_SDF.w * item.pb_SDF.h];
-                memset(item.pb_SDF.pixels, 0, item.pb_SDF.w * item.pb_SDF.h * 4);
-                item.pb_SDF.CopyCropped(item.pb_source, SDFRange, SDFRange);
-                item.pb_SDF.CalcCropRect();
-                item.sourceState = FontChar::GeneratedLargeSDF;
-                item.sdf = false;
-            }
-
-            // generate scaled SDF if we haven't generated it for the current font size
-            SDL_assert(item.sourceState == FontChar::GeneratedLargeSDF || item.sourceState == FontChar::GeneratedScaledSDF);
-
-            if (item.sourceState != FontChar::GeneratingScaledSDF && (item.sourceState != FontChar::GeneratedScaledSDF || item.scaledSize != fontSize))
-            {
-                // scale the large SDF to fontsize
-                float scalar = (float)fontSize / 512.0f;
-                item.pb_scaledSDF.w = (int)(item.pb_SDF.crop_w * scalar);
-                item.pb_scaledSDF.h = (int)(item.pb_SDF.crop_h * scalar);
-                item.pb_scaledSDF.pixels = new u32[item.pb_scaledSDF.w * item.pb_scaledSDF.h];
-                item.pb_scaledSDF.pitch = item.pb_scaledSDF.w * 4;
-                item.pb_scaledSDF.ScaleCropped(item.pb_SDF);
-                item.pb_scaledSDF.CalcCropRect();
-                item.scaledSize = fontSize;
-                item.sourceState = FontChar::GeneratedScaledSDF;
-            }
-        };
-
-    if (item.sourceState == FontChar::Empty)
+    if (!item.preview)
     {
         SDL_Color white = { 255, 255, 255, 255 };
         item.surface = TTF_RenderGlyph_Blended(m_ttf_font_small, item.ch, white);
         if (item.surface)
         {
             item.texture = SDL_CreateTextureFromSurface(renderer, item.surface);
-            item.largeSurface = TTF_RenderGlyph_Blended(m_ttf_font_large, item.ch, white);
             SDL_SetTextureBlendMode(item.texture, SDL_BLENDMODE_BLEND);
-            SDL_LockSurface(item.surface);
-            SDL_LockSurface(item.largeSurface);
             TTF_GlyphMetrics(m_ttf_font_large, item.ch, &item.large_minx, &item.large_maxx, &item.large_miny, &item.large_maxy, &item.large_advance);
-            item.pb_source.pixels = (u32*)item.largeSurface->pixels;
-            item.pb_source.w = item.largeSurface->w;
-            item.pb_source.h = item.largeSurface->h;
-            item.pb_source.pitch = item.largeSurface->pitch;
-            item.pb_source.CalcCropRect();
         }
-
-        // we'll be generating the large SDF next on thread
-        item.sourceState = FontChar::GeneratedSource;
+        item.preview = true;
     }
+}
 
-    if (item.pb_source.crop_w == 0 || item.pb_source.crop_h == 0)
+void Project::GenerateCharSDF(FontChar& item)
+{
+    if (m_applySDF)
     {
-        // need this set so spaces will work on export
-        item.scaledSize = m_fontSize;
+        auto sdfFunc = [&item, fontSize = m_fontSize, &atlas = m_atlas, &font = m_ttf_font_large, &access = m_ttf_access]()
+            {
+                // generate 512 surface
+                SDL_Color white = { 255, 255, 255, 255 };
+                access.lock();
+                auto surface = TTF_RenderGlyph_Blended(font, item.ch, white);
+                if (surface)
+                {
+                    SDL_LockSurface(surface);
+                }
+                access.unlock();
+                if (surface)
+                {
+                    // use pixelblock as a view of this surface
+                    PixelBlock pb_source;
+                    pb_source.pixels = (u32*)surface->pixels;
+                    pb_source.w = surface->w;
+                    pb_source.h = surface->h;
+                    pb_source.pitch = surface->pitch;
+                    pb_source.CalcCropRect();
+
+                    // this optimised distance calculations
+                    PixelBlockDistanceFinder pbdf_source;
+                    pbdf_source.Generate(pb_source);
+
+                    // create an SDF copy of the large image
+                    PixelBlock pb_SDF;
+                    pb_SDF.w = pb_source.crop_w + SDFRange * 2;
+                    pb_SDF.h = pb_source.crop_h + SDFRange * 2;
+                    pb_SDF.pitch = pb_SDF.w * 4;
+                    pb_SDF.pixels = new u32[pb_SDF.w * pb_SDF.h];
+                    pb_SDF.GenerateSDF(pb_source, pbdf_source, SDFRange);
+                    pb_SDF.CalcCropRect();
+
+                    // scale the large SDF to fontsize
+                    float scalar = (float)fontSize / 512.0f;
+                    item.pb_scaledSDF.w = (int)(pb_SDF.crop_w * scalar);
+                    item.pb_scaledSDF.h = (int)(pb_SDF.crop_h * scalar);
+                    item.pb_scaledSDF.pixels = new u32[item.pb_scaledSDF.w * item.pb_scaledSDF.h];
+                    item.pb_scaledSDF.pitch = item.pb_scaledSDF.w * 4;
+                    item.pb_scaledSDF.ScaleCropped(pb_SDF);
+                    item.pb_scaledSDF.CalcCropRect();
+
+                    // calculate the render size and offsets
+                    item.w = item.pb_scaledSDF.crop_w;
+                    item.h = item.pb_scaledSDF.crop_h;
+                    item.xoffset = (int)((pb_source.crop_x - SDFRange) * scalar);
+                    item.yoffset = (int)((pb_source.h - pb_source.crop_y - pb_source.crop_h + SDFRange) * scalar);
+                    item.scaledSize = fontSize;
+
+                    // add it to the atlas
+                    item.x = 0; // filled in by atlas
+                    item.y = 0; // filled in by atlas
+                    item.page = 0; // filled in by atlas
+                    atlas.AddBlock(&item);
+
+                    // free all memory except for the scaled SDF - we do that AFTER the atlas layout
+                    // this means we do need to retain all scaled SDF memory for all characters at once
+                    // but even a 22000 character chinese font will be about 400meg.
+                    access.lock();
+                    SDL_UnlockSurface(surface);
+                    SDL_FreeSurface(surface);
+                    surface = nullptr;
+                    access.unlock();
+
+                    delete[] pb_SDF.pixels;
+                }
+                else
+                {
+                    // empty block like a SPACE
+                    item.w = 0;
+                    item.h = 0;
+                    item.xoffset = 0;
+                    item.yoffset = 0;
+                    item.scaledSize = fontSize;
+                }
+            };
+        QueueAsyncTaskHP(sdfFunc);
     }
-    else if (item.surface && item.selected)
+    else
     {
-        if (item.sourceState == FontChar::GeneratedSource || item.sdf != m_applySDF || item.scaledSize != m_fontSize)
-        {
-            if (item.sourceState == FontChar::GeneratedSource || item.sdf != m_applySDF)
-                item.sourceState = FontChar::GeneratingLargeSDF;
-            if (m_applySDF)
-                QueueAsyncTaskHP(sdfFunc);
-            else
-                QueueAsyncTaskHP(scaleFunc);
-        }
+        auto scaleFunc = [&item, fontSize = m_fontSize, &atlas = m_atlas, &font = m_ttf_font_large, &access = m_ttf_access]()
+            {
+                // generate 512 surface
+                SDL_Color white = { 255, 255, 255, 255 };
+                access.lock();
+                auto surface = TTF_RenderGlyph_Blended(font, item.ch, white);
+                if (surface)
+                {
+                    SDL_LockSurface(surface);
+                }
+                access.unlock();
+
+                if (surface)
+                {
+                    // use pixelblock as a view of this surface
+                    PixelBlock pb_source;
+                    pb_source.pixels = (u32*)surface->pixels;
+                    pb_source.w = surface->w;
+                    pb_source.h = surface->h;
+                    pb_source.pitch = surface->pitch;
+                    pb_source.CalcCropRect();
+
+                    // just copy it straight to the SDF buffer
+                    PixelBlock pb_SDF;
+                    pb_SDF.w = pb_source.crop_w + SDFRange * 2;
+                    pb_SDF.h = pb_source.crop_h + SDFRange * 2;
+                    pb_SDF.pitch = pb_SDF.w * 4;
+                    size_t count = size_t(pb_SDF.w) * size_t(pb_SDF.h);
+                    pb_SDF.pixels = new u32[count];
+                    memset(pb_SDF.pixels, 0, pb_SDF.w * pb_SDF.h * 4);
+                    pb_SDF.CopyCropped(pb_source, SDFRange, SDFRange);
+                    pb_SDF.CalcCropRect();
+
+                    // scale the large SDF to fontsize
+                    float scalar = (float)fontSize / 512.0f;
+                    item.pb_scaledSDF.w = (int)(pb_SDF.crop_w * scalar);
+                    item.pb_scaledSDF.h = (int)(pb_SDF.crop_h * scalar);
+                    item.pb_scaledSDF.pixels = new u32[item.pb_scaledSDF.w * item.pb_scaledSDF.h];
+                    item.pb_scaledSDF.pitch = item.pb_scaledSDF.w * 4;
+                    item.pb_scaledSDF.ScaleCropped(pb_SDF);
+                    item.pb_scaledSDF.CalcCropRect();
+                    item.scaledSize = fontSize;
+
+                    // calculate the render size and offsets
+                    item.w = item.pb_scaledSDF.crop_w;
+                    item.h = item.pb_scaledSDF.crop_h;
+                    item.xoffset = (int)((pb_source.crop_x - SDFRange) * scalar);
+                    item.yoffset = (int)((pb_source.h - pb_source.crop_y - pb_source.crop_h + SDFRange) * scalar);
+                    item.scaledSize = fontSize;
+
+                    // add it to the atlas
+                    item.x = 0; // filled in by atlas
+                    item.y = 0; // filled in by atlas
+                    item.page = 0; // filled in by atlas
+                    atlas.AddBlock(&item);
+
+                    // free all memory except for the scaled SDF - we do that AFTER the atlas layout
+                    // this means we do need to retain all scaled SDF memory for all characters at once
+                    // but even a 22000 character chinese font will be about 400meg.
+                    access.lock();
+                    SDL_UnlockSurface(surface);
+                    SDL_FreeSurface(surface);
+                    surface = nullptr;
+                    access.unlock();
+
+                    delete[] pb_SDF.pixels;
+                }
+                else
+                {
+                    // empty block like a SPACE
+                    item.w = 0;
+                    item.h = 0;
+                    item.xoffset = 0;
+                    item.yoffset = 0;
+                    item.scaledSize = fontSize;
+                }
+            };
+        QueueAsyncTaskHP(scaleFunc);
     }
 }
 
@@ -781,7 +860,6 @@ void Project::AskForFont(SDL_Renderer* renderer)
     }
 }
 
-
 void Project::GenerateSDF(SDL_Renderer* renderer)
 {
     if (!m_ttf_font_large)
@@ -790,28 +868,20 @@ void Project::GenerateSDF(SDL_Renderer* renderer)
     // now wait for all tasks to finish
     WaitForAsyncTasks();
 
+    // clears the atlas ready to build it again
+    m_atlas.StartLayout(m_pageWidth, m_pageHeight, m_padding);
+
     // first make sure every selected character has a highrez font and an SDF
     for (auto& item : m_chars)
     {
         if (item.selected)
         {
-            GenerateCharItem(item, renderer);
+            GenerateCharSDF(item);
         }
     }
 
     // now wait for all tasks to finish
     WaitForAsyncTasks();
-
-    // clears the atlas ready to build it again
-    m_atlas.StartLayout(m_pageWidth, m_pageHeight, m_padding);
-
-    for (auto& item : m_chars)
-    {
-        if (item.selected)
-        {
-            m_atlas.AddBlock(&item);
-        }
-    }
 
     m_atlas.FinishLayout();
 }
