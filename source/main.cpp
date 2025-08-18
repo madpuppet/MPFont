@@ -63,6 +63,11 @@ void QueueAsyncTaskHP(const GenericTask& func)
 {
     gWorkers.QueueHighPriorityTask(func);
 }
+int GetAsyncTasksRemaining()
+{
+    return gWorkers.TasksRemaining();
+}
+
 
 void WaitForAsyncTasks()
 {

@@ -79,6 +79,11 @@ public:
 		m_abort = false;
 	}
 
+	int TasksRemaining()
+	{
+		return m_taskCount;
+	}
+
 private:
 	bool m_abort = false;
 	std::vector<std::thread *> m_processors;

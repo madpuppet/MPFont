@@ -79,6 +79,22 @@ Project::~Project()
 
 bool Project::Gui(SDL_Renderer* renderer)
 {
+    if (m_generatingSDF && m_finishedGeneratingSDF)
+    {
+        m_atlas.CreatePageTextures();
+        for (auto& ch : m_chars)
+        {
+            if (ch.pb_scaledSDF.pixels)
+            {
+                delete ch.pb_scaledSDF.pixels;
+                ch.pb_scaledSDF.pixels = nullptr;
+            }
+        }
+
+        m_generatingSDF = false;
+        m_finishedGeneratingSDF = false;
+    }
+
     m_atlas.SetRenderer(renderer);
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_HorizontalScrollbar | ImGuiWindowFlags_AlwaysVerticalScrollbar | ImGuiWindowFlags_AlwaysVerticalScrollbar;
     ImFont* font = ImGui::GetFont();
@@ -132,9 +148,18 @@ bool Project::Gui(SDL_Renderer* renderer)
         ImGui::Text("Selected %d/%d", selected_total, m_chars.size());
 
         ImGui::SameLine(0, 100);
-        if (ImGui::Button("GenerateSDF"))
+        if (m_generatingSDF)
         {
-            GenerateSDF(renderer);
+            m_ttf_access.lock();
+            ImGui::Text(m_generatingSDFState.c_str(), selected_total, m_chars.size());
+            m_ttf_access.unlock();
+        }
+        else
+        {
+            if (ImGui::Button("GenerateSDF"))
+            {
+                GenerateSDF(renderer);
+            }
         }
 
         if (ImGui::InputInt("Page Width", &m_pageWidth, 64))
@@ -151,9 +176,6 @@ bool Project::Gui(SDL_Renderer* renderer)
         ImGui::SameLine(0, 100);
         if (ImGui::Checkbox("SDF", &m_applySDF))
         {
-            AbortAsyncTasks();
-            for (auto& ch : m_chars)
-                GenerateCharItem(ch, renderer);
         }
 
         if (m_atlas.Pages().size() > 0)
@@ -367,12 +389,12 @@ bool Project::Gui(SDL_Renderer* renderer)
                 }
             }
 
-            if (m_atlas.Pages().size() > 0)
+            if (!m_generatingSDF && m_atlas.Pages().size() > 0)
             {
                 const float window_width = ImGui::GetWindowWidth();
                 m_sdfPage = std::min((int)m_atlas.Pages().size() - 1, m_sdfPage);
                 auto& page = m_atlas.Pages()[m_sdfPage];
-                ImGui::Image(page.m_texture, ImVec2((float)m_pageWidth, (float)m_pageHeight));
+                ImGui::Image(page.m_texture, ImVec2(1024, 1024));
                 ImVec2 sdf_pos = ImGui::GetItemRectMin();
                 ImVec2 sdf_max = ImGui::GetItemRectMax();
 
@@ -417,6 +439,8 @@ bool Project::Gui(SDL_Renderer* renderer)
             }
             if (m_atlas.Pages().size() > 1)
             {
+                ImGui::Text("Page %d/%d", m_sdfPage + 1, m_atlas.Pages().size());
+                ImGui::SameLine();
                 if (ImGui::Button("Prev Page"))
                 {
                     if (m_atlas.Pages().size() > 1)
@@ -679,7 +703,7 @@ void Project::GenerateCharSDF(FontChar& item)
 {
     if (m_applySDF)
     {
-        auto sdfFunc = [&item, fontSize = m_fontSize, &atlas = m_atlas, &font = m_ttf_font_large, &access = m_ttf_access]()
+        auto sdfFunc = [&item, fontSize = m_fontSize, &atlas = m_atlas, &font = m_ttf_font_large, &access = m_ttf_access, &sdfState = m_generatingSDFState]()
             {
                 // generate 512 surface
                 SDL_Color white = { 255, 255, 255, 255 };
@@ -742,6 +766,7 @@ void Project::GenerateCharSDF(FontChar& item)
                     SDL_UnlockSurface(surface);
                     SDL_FreeSurface(surface);
                     surface = nullptr;
+                    sdfState = std::format("Processing {}", GetAsyncTasksRemaining());
                     access.unlock();
 
                     delete[] pb_SDF.pixels;
@@ -760,7 +785,7 @@ void Project::GenerateCharSDF(FontChar& item)
     }
     else
     {
-        auto scaleFunc = [&item, fontSize = m_fontSize, &atlas = m_atlas, &font = m_ttf_font_large, &access = m_ttf_access]()
+        auto scaleFunc = [&item, fontSize = m_fontSize, &atlas = m_atlas, &font = m_ttf_font_large, &access = m_ttf_access, &sdfState = m_generatingSDFState]()
             {
                 // generate 512 surface
                 SDL_Color white = { 255, 255, 255, 255 };
@@ -823,6 +848,7 @@ void Project::GenerateCharSDF(FontChar& item)
                     SDL_UnlockSurface(surface);
                     SDL_FreeSurface(surface);
                     surface = nullptr;
+                    sdfState = std::format("Processing {}", GetAsyncTasksRemaining());
                     access.unlock();
 
                     delete[] pb_SDF.pixels;
@@ -862,27 +888,51 @@ void Project::AskForFont(SDL_Renderer* renderer)
 
 void Project::GenerateSDF(SDL_Renderer* renderer)
 {
+    if (m_generatingSDF)
+        return;
+
+    if (m_generateSDFTask)
+    {
+        if (m_generateSDFTask->joinable())
+            m_generateSDFTask->join();
+        delete m_generateSDFTask;
+    }
+
     if (!m_ttf_font_large)
         return;
 
+    m_generatingSDF = true;
+    m_finishedGeneratingSDF = false;
+
     // now wait for all tasks to finish
     WaitForAsyncTasks();
 
-    // clears the atlas ready to build it again
-    m_atlas.StartLayout(m_pageWidth, m_pageHeight, m_padding);
-
-    // first make sure every selected character has a highrez font and an SDF
-    for (auto& item : m_chars)
-    {
-        if (item.selected)
+    auto generateTask = [this]()
         {
-            GenerateCharSDF(item);
-        }
-    }
+            // clears the atlas ready to build it again
+            m_atlas.StartLayout(m_pageWidth, m_pageHeight, m_padding);
 
-    // now wait for all tasks to finish
-    WaitForAsyncTasks();
+            // first make sure every selected character has a highrez font and an SDF
+            for (auto& item : m_chars)
+            {
+                if (item.selected)
+                {
+                    GenerateCharSDF(item);
+                }
+            }
 
-    m_atlas.FinishLayout();
+            // now wait for all tasks to finish
+            WaitForAsyncTasks();
+
+            m_ttf_access.lock();
+            m_generatingSDFState = "Generating Pages";
+            m_ttf_access.unlock();
+
+            m_atlas.LayoutBlocks();
+
+            m_finishedGeneratingSDF = true;
+        };
+
+    m_generateSDFTask = new std::thread(generateTask);
 }
 

@@ -36,7 +36,8 @@ public:
 	void SetRenderer(SDL_Renderer* renderer) { m_renderer = renderer; }
 	void StartLayout(int w, int h, int padding);
 	void AddBlock(FontChar *item);
-	void FinishLayout();
+	void LayoutBlocks();
+	void CreatePageTextures();
 	std::vector<Page>& Pages() { return m_pages; }
 
 private:

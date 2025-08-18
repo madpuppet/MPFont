@@ -24,7 +24,7 @@ void Atlas::AddBlock(FontChar *item)
 	m_access.unlock();
 }
 
-void Atlas::FinishLayout()
+void Atlas::LayoutBlocks()
 {
 	auto presort_compare = [](const FontChar* a, const FontChar* b) -> bool
 		{
@@ -49,12 +49,14 @@ void Atlas::FinishLayout()
 			}
 		}
 	}
+}
 
+void Atlas::CreatePageTextures()
+{
 	for (auto& page : m_pages)
 	{
 		page.m_texture = SDL_CreateTextureFromSurface(m_renderer, page.m_surface);
 	}
-
 	m_blocks.clear();
 }
 

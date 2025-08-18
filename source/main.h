@@ -18,4 +18,5 @@ void QueueAsyncTaskLP(const GenericTask& func);
 void QueueAsyncTaskHP(const GenericTask& func);
 void WaitForAsyncTasks();
 void AbortAsyncTasks();
+int GetAsyncTasksRemaining();
 
