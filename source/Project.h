@@ -64,9 +64,7 @@ private:
     int m_padding = 2;
 
     std::mutex m_ttf_access;
-
     bool m_generatingSDF = false;
     bool m_finishedGeneratingSDF = false;
-    std::string m_generatingSDFState;
     std::thread* m_generateSDFTask = nullptr;
 };

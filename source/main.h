@@ -5,7 +5,7 @@
 #include <sys/types.h>
 #include <functional>
 #include <mutex>
-#include "SDL_ttf.h"
+#include "SDL3/SDL_ttf.h"
 #include "Project.h"
 #include "types.h"
 

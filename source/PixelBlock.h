@@ -39,6 +39,7 @@ struct PixelBlock
     void GenerateSDF(const PixelBlock& source, const PixelBlockDistanceFinder& sourceDF, int range);
     void CopyCropped(const PixelBlock& source, int x, int y);
     void ScaleCropped(const PixelBlock& source);
+    void Scale(const PixelBlock& source);
     void Dump();
 };
 

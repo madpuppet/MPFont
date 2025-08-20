@@ -1,7 +1,7 @@
 #include "PixelBlock.h"
 #include "math.h"
 #include "types.h"
-#include "SDL.h"
+#include "SDL3/SDL.h"
 
 #include <cstdint>
 #include <cmath>
@@ -93,6 +93,45 @@ void PixelBlock::ScaleCropped(const PixelBlock& source)
     }
 }
 
+void PixelBlock::Scale(const PixelBlock& source)
+{
+    if (source.w == 0 || source.h == 0)
+        return;
+
+    // scale source crop_x..crop_x+crop_w, crop_y..crop_y+crop_w  =>  w,h
+    for (int y = 0; y < h; y++)
+    {
+        for (int x = 0; x < w; x++)
+        {
+            int x1 = x * source.w / w;
+            int x2 = (x + 1) * source.w / w;
+            int y1 = y * source.h / h;
+            int y2 = (y + 1) * source.h / h;
+            u32 accumA = 0;
+            u32 accumR = 0;
+            u32 accumG = 0;
+            u32 accumB = 0;
+            for (int yy = y1; yy < y2; yy++)
+            {
+                for (int xx = x1; xx < x2; xx++)
+                {
+                    u32 val = source.pixels[yy * source.pitch / 4 + xx];
+                    accumA += val >> 24;
+                    accumR += (val >> 16) & 0xff;
+                    accumG += (val >> 8) & 0xff;
+                    accumB += val & 0xff;
+                }
+            }
+            int area = (x2 - x1) * (y2 - y1);
+            accumA /= area;
+            accumR /= area;
+            accumG /= area;
+            accumB /= area;
+            pixels[y * pitch / 4 + x] = (accumA << 24) | (accumR << 16) | (accumG << 8) | (accumB);
+        }
+    }
+}
+
 void PixelBlock::CopyCropped(const PixelBlock& source, int x, int y)
 {
     for (int yy = 0; yy < source.crop_h; yy++)
@@ -155,12 +194,17 @@ void PixelBlock::CalcCropRect()
 
 void PixelBlock::GenerateSDF(const PixelBlock& source, const PixelBlockDistanceFinder &sourceDF, int range)
 {
-    for (int yy = 0; yy < h; yy++)
+    int miny = std::max(source.crop_y - range, 0);
+    int maxy = std::min(source.crop_y + source.crop_h, h);
+    int minx = std::max(source.crop_x - range, 0);
+    int maxx = std::max(source.crop_x + source.crop_w, w);
+
+    for (int yy = miny; yy < maxy; yy++)
     {
-        int ysrc = source.crop_y - range + yy;
-        for (int xx = 0; xx < w; xx++)
+        int ysrc = yy;
+        for (int xx = minx; xx < maxx; xx++)
         {
-            int xsrc = source.crop_x - range + xx;
+            int xsrc = xx;
             int distX, distY;
             int dist = sourceDF.FindDistance(xsrc, ysrc, range, distX, distY);
             u32 nx = xx * 255 / (w - 1);
@@ -192,7 +236,7 @@ void PixelBlock::Dump()
         for (int x = 0; x < w; x++)
         {
             u8 val = (pixels[y * (pitch / 4) + x] & 0xff000000) >> 24;
-            line[x] = val>0x80 ? 'A' : '.';
+            line[x] = val > 0 ? 'A'+val/30 : '.';
         }
         SDL_Log("%03d:%s",y,line);
     }

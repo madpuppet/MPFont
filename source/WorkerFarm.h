@@ -4,7 +4,7 @@
 #include <mutex>
 #include <semaphore>
 #include <vector>
-#include "SDL.h"
+#include "SDL3/SDL.h"
 
 #undef max
 

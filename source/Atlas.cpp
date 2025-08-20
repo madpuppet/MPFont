@@ -11,7 +11,7 @@ void Atlas::StartLayout(int w, int h, int padding)
 		if (page.m_texture)
 			SDL_DestroyTexture(page.m_texture);
 		if (page.m_surface)
-			SDL_FreeSurface(page.m_surface);
+			SDL_DestroySurface(page.m_surface);
 	}
 	m_pages.clear();
 	m_blocks.clear();
@@ -33,7 +33,7 @@ void Atlas::LayoutBlocks()
 
 	auto compare = [](const FontChar* a, const FontChar* b) -> bool
 		{
-			return a->pb_scaledSDF.h < b->pb_scaledSDF.h;
+			return a->pb_scaledSDF.crop_h < b->pb_scaledSDF.crop_h;
 		};
 	std::sort(m_blocks.begin(), m_blocks.end(), presort_compare);
 	std::sort(m_blocks.begin(), m_blocks.end(), compare);
@@ -63,7 +63,7 @@ void Atlas::CreatePageTextures()
 void Atlas::AddNewPage()
 {
 	Page page;
-	page.m_surface = SDL_CreateRGBSurfaceWithFormat(0, m_width, m_height, 1, SDL_PIXELFORMAT_ARGB8888);
+	page.m_surface = SDL_CreateSurface(m_width, m_height, SDL_PIXELFORMAT_ARGB8888);
 	SDL_LockSurface(page.m_surface);
 	m_pages.push_back(page);
 
@@ -87,9 +87,6 @@ bool Atlas::TryAddBlock(FontChar *item)
 	// got any pages allocated yet?
 	if (m_pages.empty())
 		return false;
-
-	float scalar = (float)item->scaledSize / 512.0f;
-	item->advance = (int)(item->large_advance * scalar);
 
 	if (item->w == 0 || item->h == 0 || item->w > m_width || item->h > m_height)
 	{

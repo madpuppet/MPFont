@@ -3,8 +3,8 @@
 #include "types.h"
 #include <mutex>
 #include <vector>
-#include <SDL.h>
-#include "SDL_Surface.h"
+#include "SDL3/SDL.h"
+#include "SDL3/SDL_Surface.h"
 #include "PixelBlock.h"
 #include "FontChar.h"
 

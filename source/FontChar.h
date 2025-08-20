@@ -1,7 +1,7 @@
 #pragma once
 
-#include "SDL.h"
-#include "SDL_Surface.h"
+#include "SDL3/SDL.h"
+#include "SDL3/SDL_Surface.h"
 #include "PixelBlock.h"
 
 #define SDFRange 32
@@ -14,15 +14,9 @@ struct FontChar
     bool preview = false;
     bool generated = false;
 
-    SDL_Texture* texture = nullptr;             // preview texture  (32)
-    SDL_Surface* surface = nullptr;             // small surface  (32)
-
-    // glyph settings from 512 sized glyph
-    int large_minx = 0;
-    int large_maxx = 0;
-    int large_miny = 0;
-    int large_maxy = 0;
-    int large_advance = 0;
+    SDL_Texture* preview_texture = nullptr;             // preview texture  (32)
+    SDL_Surface* preview_surface = nullptr;             // preview surface  (32)
+    int preview_advance = 0;
 
     // Final SDF block needed by Atlas
     PixelBlock pb_scaledSDF;
