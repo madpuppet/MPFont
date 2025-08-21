@@ -492,6 +492,7 @@ void Project::Export()
             root->AddChild("pageHeight", std::format("{}", m_pageHeight));
             root->AddChild("fontSize", std::format("{}", m_fontSize));
             root->AddChild("lineHeight", std::format("{}", m_fontSize + m_linePadding));
+            root->AddChild("cropSDF", std::format("{}", m_applySDF ? 6 : 0));
             auto charsNode = root->AddChild("chars", std::format("{}", m_chars.size()));
             for (auto &item : m_chars)
             {
@@ -725,6 +726,7 @@ void Project::GenerateCharSDF(FontChar& item)
                         }
                     }
                     item.pb_scaledSDF.CalcCropRect();
+//                    item.pb_scaledSDF.Dump();
                     item.scaledSize = fontSize;
 
                     // calculate the render size and offsets
@@ -733,9 +735,11 @@ void Project::GenerateCharSDF(FontChar& item)
                     item.w = item.pb_scaledSDF.crop_w;
                     item.h = item.pb_scaledSDF.crop_h;
 
-                    item.xoffset = minx + croppedX;
-                    item.yoffset = miny + croppedY;
+                    item.xoffset = -(fontSize / 8);
+                    item.yoffset = croppedY - (item.pb_scaledSDF.h - fontSize);
                     item.advance = advance;
+//                    SDL_Log("Glyph %c : %d,%d, %d,%d -> %d,%d,%d,%d -> %d,%d", item.ch, minx, miny, maxx, maxy,
+//                        item.pb_scaledSDF.crop_x, item.pb_scaledSDF.crop_y, item.pb_scaledSDF.crop_w, item.pb_scaledSDF.crop_h, item.xoffset, item.yoffset);
 
                     // add it to the atlas
                     item.x = 0; // filled in by atlas
